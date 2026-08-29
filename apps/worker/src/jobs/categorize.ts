@@ -1,0 +1,123 @@
+import { GoogleGenAI, Type } from "@google/genai";
+import { prisma } from "@finance-app/db";
+
+const MODEL = "gemini-flash-lite-latest";
+const BATCH_SIZE = 50;
+
+let client: GoogleGenAI | undefined;
+function getClient(): GoogleGenAI {
+  if (client) return client;
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY must be set");
+  client = new GoogleGenAI({ apiKey });
+  return client;
+}
+
+const RESPONSE_SCHEMA = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      transactionId: { type: Type.STRING },
+      categoryId: {
+        type: Type.STRING,
+        description: "One of the provided category ids, or the literal string \"none\" if nothing fits.",
+      },
+      confidence: { type: Type.NUMBER, description: "0 to 1." },
+    },
+    required: ["transactionId", "categoryId", "confidence"],
+  },
+};
+
+interface AiSuggestion {
+  transactionId: string;
+  categoryId: string;
+  confidence: number;
+}
+
+/**
+ * The AI fallback for whatever the synchronous rule pass (applyCategorizationRules,
+ * run on every manual/CSV/Plaid transaction) left uncategorized. Batches all of a
+ * user's uncategorized transactions into one Gemini call (structured JSON output,
+ * not free-text parsing) rather than one call per transaction — this is the free
+ * tier, so minimizing request count matters.
+ */
+export async function runCategorizationBatchForAllUsers(): Promise<void> {
+  const userIds = await prisma.appUser.findMany({ select: { id: true } });
+  for (const { id: userId } of userIds) {
+    try {
+      await runCategorizationBatchForUser(userId);
+    } catch (err) {
+      console.error(`[worker] runCategorizationBatch: user ${userId} failed`, err);
+    }
+  }
+}
+
+async function runCategorizationBatchForUser(userId: string): Promise<void> {
+  const [categories, transactions] = await Promise.all([
+    prisma.category.findMany({
+      where: { userId, isArchived: false },
+      select: { id: true, name: true, kind: true },
+    }),
+    prisma.transaction.findMany({
+      where: { userId, categorySource: "uncategorized", isTransfer: false },
+      select: { id: true, description: true, merchantName: true, amount: true },
+      take: BATCH_SIZE,
+      orderBy: { date: "desc" },
+    }),
+  ]);
+
+  if (transactions.length === 0 || categories.length === 0) return;
+
+  const ai = getClient();
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: JSON.stringify({
+      categories: categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
+      transactions: transactions.map((t) => ({
+        id: t.id,
+        description: t.description,
+        merchant: t.merchantName,
+        amount: Number(t.amount),
+      })),
+    }),
+    config: {
+      systemInstruction:
+        "You categorize personal finance transactions. For each transaction, pick the single " +
+        "best-fitting category id from the provided list based on its description/merchant. " +
+        "Negative amounts are money leaving the account (expenses); positive are income. Only " +
+        "use category ids from the provided list, or the literal string \"none\" if nothing " +
+        "fits well. Return one entry per transaction, in the same order given.",
+      responseMimeType: "application/json",
+      responseSchema: RESPONSE_SCHEMA,
+    },
+  });
+
+  const text = response.text;
+  if (!text) {
+    console.error(`[worker] runCategorizationBatch: empty response for user ${userId}`);
+    return;
+  }
+
+  let suggestions: AiSuggestion[];
+  try {
+    suggestions = JSON.parse(text);
+  } catch {
+    console.error(`[worker] runCategorizationBatch: unparseable response for user ${userId}`);
+    return;
+  }
+
+  const validCategoryIds = new Set(categories.map((c) => c.id));
+  const validTransactionIds = new Set(transactions.map((t) => t.id));
+
+  for (const s of suggestions) {
+    if (!validTransactionIds.has(s.transactionId)) continue;
+    if (s.categoryId === "none" || !validCategoryIds.has(s.categoryId)) continue;
+    const confidence = Math.max(0, Math.min(1, s.confidence));
+
+    await prisma.transaction.update({
+      where: { id: s.transactionId },
+      data: { categoryId: s.categoryId, categorySource: "ai", categoryConfidence: confidence },
+    });
+  }
+}
