@@ -1,0 +1,46 @@
+import { prisma } from "@finance-app/db";
+import { CountryCode, Products } from "plaid";
+import { getPlaidClient } from "./client";
+import { upsertPlaidAccounts } from "./accounts";
+import { syncPlaidItem } from "./sync";
+import { encryptSecret } from "@finance-app/crypto";
+
+export async function createPlaidLinkToken(userId: string): Promise<string> {
+  const client = getPlaidClient();
+  const response = await client.linkTokenCreate({
+    client_name: "Meadow",
+    language: "en",
+    country_codes: [CountryCode.Us],
+    user: { client_user_id: userId },
+    products: [Products.Transactions],
+  });
+  return response.data.link_token;
+}
+
+/**
+ * Exchanges a Link `public_token` for a persisted access token, creates the
+ * FinancialAccount rows for every account at the institution, then runs an
+ * immediate sync so the user sees transactions right away instead of
+ * waiting for the nightly worker job.
+ */
+export async function linkPlaidItem(
+  userId: string,
+  publicToken: string,
+  institutionName: string | null
+): Promise<{ plaidItemId: string; sync: Awaited<ReturnType<typeof syncPlaidItem>> }> {
+  const client = getPlaidClient();
+
+  const exchangeResponse = await client.itemPublicTokenExchange({ public_token: publicToken });
+  const { access_token: accessToken, item_id: plaidItemId } = exchangeResponse.data;
+
+  const item = await prisma.plaidItem.create({
+    data: { userId, plaidItemId, accessToken: encryptSecret(accessToken), institutionName },
+  });
+
+  const accountsResponse = await client.accountsGet({ access_token: accessToken });
+  await upsertPlaidAccounts(userId, accountsResponse.data.accounts, institutionName);
+
+  const sync = await syncPlaidItem(item.id);
+
+  return { plaidItemId: item.id, sync };
+}

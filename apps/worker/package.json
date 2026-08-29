@@ -1,0 +1,25 @@
+{
+  "name": "@finance-app/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@finance-app/db": "workspace:*",
+    "@finance-app/finance-logic": "workspace:*",
+    "@finance-app/plaid-sync": "workspace:*",
+    "@finance-app/ibkr-sync": "workspace:*",
+    "@google/genai": "^2.19.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

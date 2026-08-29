@@ -1,0 +1,797 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["auth", "app"]
+}
+
+// =========================================================================
+// Auth.js (NextAuth) — model names must stay User/Account/Session/
+// VerificationToken for @auth/prisma-adapter to work without a custom
+// adapter. Domain "financial account" is modeled separately as
+// FinancialAccount to avoid colliding with Auth's Account model.
+// =========================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+
+  accounts Account[]
+  sessions Session[]
+  profile  AppUser?
+
+  @@map("users")
+  @@schema("auth")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+  @@schema("auth")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+  @@schema("auth")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+  @@schema("auth")
+}
+
+// =========================================================================
+// App domain — profile
+// =========================================================================
+
+model AppUser {
+  id              String   @id
+  defaultCurrency String   @default("USD") @map("default_currency")
+  locale          String   @default("en-US")
+  timezone        String   @default("UTC")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  authUser User @relation(fields: [id], references: [id], onDelete: Cascade)
+
+  financialAccounts     FinancialAccount[]
+  categories            Category[]
+  budgets               Budget[]
+  budgetPeriodSnapshots BudgetPeriodSnapshot[]
+  sinkingFunds          SinkingFund[]
+  categorizationRules   CategorizationRule[]
+  recurringSeries       RecurringSeries[]
+  targetAllocations     TargetAllocation[]
+  holdingBuckets        HoldingBucketAssignment[]
+  alertRules            AlertRule[]
+  alertEvents           AlertEvent[]
+  importBatches         ImportBatch[]
+  csvImportTemplates    CsvImportTemplate[]
+  plaidItems            PlaidItem[]
+  transactions          Transaction[]
+
+  @@map("users")
+  @@schema("app")
+}
+
+// =========================================================================
+// Reference data
+// =========================================================================
+
+model Currency {
+  code          String @id
+  symbol        String
+  decimalPlaces Int    @default(2) @map("decimal_places")
+  name          String
+
+  @@map("currencies")
+  @@schema("app")
+}
+
+model ExchangeRate {
+  id            String   @id @default(cuid())
+  baseCurrency  String   @map("base_currency")
+  quoteCurrency String   @map("quote_currency")
+  rate          Decimal  @db.Decimal(18, 8)
+  asOfDate      DateTime @map("as_of_date") @db.Date
+  source        String
+
+  @@unique([baseCurrency, quoteCurrency, asOfDate])
+  @@map("exchange_rates")
+  @@schema("app")
+}
+
+// =========================================================================
+// Accounts & sync
+// =========================================================================
+
+enum AccountType {
+  checking
+  savings
+  credit_card
+  brokerage
+  cash
+  loan
+  other
+
+  @@schema("app")
+}
+
+enum AccountClassification {
+  asset
+  liability
+
+  @@schema("app")
+}
+
+enum SyncSource {
+  plaid
+  ibkr_flex
+  csv
+  manual
+
+  @@schema("app")
+}
+
+model FinancialAccount {
+  id                 String                 @id @default(cuid())
+  userId             String                 @map("user_id")
+  name               String
+  type               AccountType
+  classification     AccountClassification
+  currency           String
+  institutionName    String?                @map("institution_name")
+  syncSource         SyncSource             @map("sync_source")
+  externalAccountId  String?                @map("external_account_id")
+  isArchived         Boolean                @default(false) @map("is_archived")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transactions          Transaction[]
+  ibkrFlexConfig        IbkrFlexConfig?
+  investmentHoldings    InvestmentHolding[]
+  investmentHoldingsHistory InvestmentHoldingHistory[]
+  investmentTransactions InvestmentTransaction[]
+  importBatches         ImportBatch[]
+  alertRules            AlertRule[]
+
+  @@index([userId])
+  @@map("accounts")
+  @@schema("app")
+}
+
+model PlaidItem {
+  id              String    @id @default(cuid())
+  userId          String    @map("user_id")
+  plaidItemId     String    @unique @map("plaid_item_id")
+  accessToken     String    @map("access_token")
+  institutionName String?   @map("institution_name")
+  status          String    @default("active")
+  cursor          String?
+  lastSyncedAt    DateTime? @map("last_synced_at")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("plaid_items")
+  @@schema("app")
+}
+
+model IbkrFlexConfig {
+  id             String    @id @default(cuid())
+  userId         String    @map("user_id")
+  accountId      String    @unique @map("account_id")
+  flexToken      String    @map("flex_token")
+  flexQueryId    String    @map("flex_query_id")
+  lastRunAt      DateTime? @map("last_run_at")
+  lastReportDate DateTime? @map("last_report_date") @db.Date
+  status         String    @default("active")
+
+  account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("ibkr_flex_configs")
+  @@schema("app")
+}
+
+// =========================================================================
+// Ledger
+// =========================================================================
+
+enum CategorySource {
+  rule
+  ai
+  manual
+  uncategorized
+
+  @@schema("app")
+}
+
+model Transaction {
+  id                    String         @id @default(cuid())
+  userId                String         @map("user_id")
+  accountId             String         @map("account_id")
+  amount                Decimal        @db.Decimal(18, 4)
+  currency              String
+  description           String
+  merchantName          String?        @map("merchant_name")
+  date                  DateTime       @db.Date
+  authorizedDate        DateTime?      @map("authorized_date") @db.Date
+  categoryId            String?        @map("category_id")
+  categoryConfidence    Decimal?       @map("category_confidence") @db.Decimal(4, 3)
+  categorySource        CategorySource @default(uncategorized) @map("category_source")
+  isTransfer            Boolean        @default(false) @map("is_transfer")
+  transferPairId        String?        @unique @map("transfer_pair_id")
+  pending               Boolean        @default(false)
+  externalTransactionId String?        @map("external_transaction_id")
+  importBatchId         String?        @map("import_batch_id")
+  notes                 String?
+
+  user         AppUser           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account      FinancialAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category     Category?         @relation(fields: [categoryId], references: [id])
+  importBatch  ImportBatch?      @relation(fields: [importBatchId], references: [id])
+  transferPair Transaction?      @relation("TransferPair", fields: [transferPairId], references: [id])
+  transferOf   Transaction?      @relation("TransferPair")
+
+  splits               TransactionSplit[]
+  sinkingFundContribs  SinkingFundContribution[]
+  recurringSeriesLinks RecurringSeriesTransaction[]
+
+  @@unique([accountId, externalTransactionId])
+  @@index([userId, date(sort: Desc)])
+  @@index([accountId, date(sort: Desc)])
+  @@map("transactions")
+  @@schema("app")
+}
+
+enum SplitType {
+  gross_addition
+  deduction
+
+  @@schema("app")
+}
+
+model TransactionSplit {
+  id            String    @id @default(cuid())
+  transactionId String    @map("transaction_id")
+  label         String
+  amount        Decimal   @db.Decimal(18, 4)
+  splitType     SplitType @map("split_type")
+  categoryId    String?   @map("category_id")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  category    Category?   @relation(fields: [categoryId], references: [id])
+
+  @@index([transactionId])
+  @@map("transaction_splits")
+  @@schema("app")
+}
+
+// =========================================================================
+// Categories & budgets
+// =========================================================================
+
+enum CategoryKind {
+  income
+  expense
+  transfer
+
+  @@schema("app")
+}
+
+enum BudgetType {
+  none
+  monthly_reset
+  rollover_envelope
+  sinking_fund
+
+  @@schema("app")
+}
+
+model Category {
+  id               String     @id @default(cuid())
+  userId           String     @map("user_id")
+  name             String
+  parentCategoryId String?    @map("parent_category_id")
+  kind             CategoryKind
+  budgetType       BudgetType @default(none) @map("budget_type")
+  icon             String?
+  color            String?
+  sortOrder        Int        @default(0) @map("sort_order")
+  isArchived       Boolean    @default(false) @map("is_archived")
+
+  user           AppUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentCategory Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
+  children       Category[] @relation("CategoryHierarchy")
+
+  transactions       Transaction[]
+  transactionSplits  TransactionSplit[]
+  budgets            Budget[]
+  budgetSnapshots    BudgetPeriodSnapshot[]
+  sinkingFunds       SinkingFund[]
+  categorizationRules CategorizationRule[]
+  recurringSeries    RecurringSeries[]
+
+  @@index([userId])
+  @@map("categories")
+  @@schema("app")
+}
+
+enum BudgetPeriod {
+  weekly
+  monthly
+  quarterly
+  annual
+
+  @@schema("app")
+}
+
+model Budget {
+  id              String       @id @default(cuid())
+  userId          String       @map("user_id")
+  categoryId      String       @map("category_id")
+  amount          Decimal      @db.Decimal(18, 4)
+  currency        String
+  period          BudgetPeriod
+  rolloverEnabled Boolean      @default(false) @map("rollover_enabled")
+  rolloverCap     Decimal?     @map("rollover_cap") @db.Decimal(18, 4)
+  effectiveFrom   DateTime     @map("effective_from") @db.Date
+  effectiveTo     DateTime?    @map("effective_to") @db.Date
+
+  user     AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([categoryId, effectiveFrom])
+  @@map("budgets")
+  @@schema("app")
+}
+
+model BudgetPeriodSnapshot {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id")
+  categoryId       String   @map("category_id")
+  periodStart      DateTime @map("period_start") @db.Date
+  periodEnd        DateTime @map("period_end") @db.Date
+  allottedAmount   Decimal  @map("allotted_amount") @db.Decimal(18, 4)
+  rolledOverAmount Decimal  @default(0) @map("rolled_over_amount") @db.Decimal(18, 4)
+  spentAmount      Decimal  @map("spent_amount") @db.Decimal(18, 4)
+  remainingAmount  Decimal  @map("remaining_amount") @db.Decimal(18, 4)
+  computedAt       DateTime @default(now()) @map("computed_at")
+
+  user     AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([categoryId, periodStart])
+  @@map("budget_period_snapshots")
+  @@schema("app")
+}
+
+enum SinkingFundRecurrence {
+  one_time
+  repeating
+
+  @@schema("app")
+}
+
+model SinkingFund {
+  id                 String                @id @default(cuid())
+  userId             String                @map("user_id")
+  categoryId         String?               @map("category_id")
+  name               String
+  targetAmount       Decimal               @map("target_amount") @db.Decimal(18, 4)
+  currency           String
+  deadlineDate       DateTime              @map("deadline_date") @db.Date
+  recurrence         SinkingFundRecurrence @default(one_time)
+  recurrenceInterval String?               @map("recurrence_interval")
+  currentBalance     Decimal               @default(0) @map("current_balance") @db.Decimal(18, 4)
+
+  user     AppUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id])
+
+  contributions SinkingFundContribution[]
+
+  @@index([userId])
+  @@map("sinking_funds")
+  @@schema("app")
+}
+
+model SinkingFundContribution {
+  id            String   @id @default(cuid())
+  sinkingFundId String   @map("sinking_fund_id")
+  transactionId String?  @map("transaction_id")
+  amount        Decimal  @db.Decimal(18, 4)
+  date          DateTime @db.Date
+  note          String?
+
+  sinkingFund SinkingFund  @relation(fields: [sinkingFundId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+
+  @@index([sinkingFundId])
+  @@map("sinking_fund_contributions")
+  @@schema("app")
+}
+
+// =========================================================================
+// Categorization intelligence
+// =========================================================================
+
+enum RuleMatchType {
+  exact_merchant
+  contains
+  regex
+
+  @@schema("app")
+}
+
+enum RuleSource {
+  user_created
+  learned_from_correction
+
+  @@schema("app")
+}
+
+model CategorizationRule {
+  id            String        @id @default(cuid())
+  userId        String        @map("user_id")
+  matchType     RuleMatchType @map("match_type")
+  pattern       String
+  categoryId    String        @map("category_id")
+  priority      Int           @default(0)
+  source        RuleSource    @default(user_created)
+  matchCount    Int           @default(0) @map("match_count")
+  isActive      Boolean       @default(true) @map("is_active")
+  lastMatchedAt DateTime?     @map("last_matched_at")
+
+  user     AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([userId, priority])
+  @@map("categorization_rules")
+  @@schema("app")
+}
+
+enum RecurringCadence {
+  weekly
+  biweekly
+  monthly
+  quarterly
+  annual
+  irregular
+
+  @@schema("app")
+}
+
+enum RecurringStatus {
+  active
+  amount_changed
+  missed
+  cancelled
+  merged
+
+  @@schema("app")
+}
+
+model RecurringSeries {
+  id                 String           @id @default(cuid())
+  userId             String           @map("user_id")
+  merchantKey        String           @map("merchant_key")
+  categoryId         String?          @map("category_id")
+  cadence            RecurringCadence
+  expectedAmount     Decimal          @map("expected_amount") @db.Decimal(18, 4)
+  amountTolerancePct Decimal          @default(0.10) @map("amount_tolerance_pct") @db.Decimal(4, 3)
+  currency           String
+  lastSeenDate       DateTime         @map("last_seen_date") @db.Date
+  nextExpectedDate   DateTime?        @map("next_expected_date") @db.Date
+  status             RecurringStatus  @default(active)
+  confidenceScore    Decimal          @map("confidence_score") @db.Decimal(4, 3)
+
+  user     AppUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id])
+
+  transactions RecurringSeriesTransaction[]
+  events       RecurringSeriesEvent[]
+
+  @@unique([userId, merchantKey])
+  @@map("recurring_series")
+  @@schema("app")
+}
+
+model RecurringSeriesTransaction {
+  recurringSeriesId String @map("recurring_series_id")
+  transactionId      String @unique @map("transaction_id")
+
+  recurringSeries RecurringSeries @relation(fields: [recurringSeriesId], references: [id], onDelete: Cascade)
+  transaction     Transaction     @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@id([recurringSeriesId, transactionId])
+  @@map("recurring_series_transactions")
+  @@schema("app")
+}
+
+enum RecurringEventType {
+  amount_increased
+  amount_decreased
+  missed
+  resumed
+  cancelled
+
+  @@schema("app")
+}
+
+model RecurringSeriesEvent {
+  id                 String             @id @default(cuid())
+  recurringSeriesId  String             @map("recurring_series_id")
+  eventType          RecurringEventType @map("event_type")
+  oldValue           String?            @map("old_value")
+  newValue           String?            @map("new_value")
+  detectedAt         DateTime           @default(now()) @map("detected_at")
+  acknowledged       Boolean            @default(false)
+
+  recurringSeries RecurringSeries @relation(fields: [recurringSeriesId], references: [id], onDelete: Cascade)
+
+  @@index([recurringSeriesId])
+  @@map("recurring_series_events")
+  @@schema("app")
+}
+
+// =========================================================================
+// Investments
+// =========================================================================
+
+model InvestmentHolding {
+  id             String   @id @default(cuid())
+  accountId      String   @map("account_id")
+  symbol         String
+  securityType   String   @map("security_type")
+  quantity       Decimal  @db.Decimal(20, 8)
+  avgCost        Decimal? @map("avg_cost") @db.Decimal(18, 4)
+  currency       String
+  marketValue    Decimal  @map("market_value") @db.Decimal(18, 4)
+  asOfDate       DateTime @map("as_of_date") @db.Date
+  assetClassTag  String?  @map("asset_class_tag")
+
+  account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, symbol, asOfDate])
+  @@map("investment_holdings")
+  @@schema("app")
+}
+
+model InvestmentHoldingHistory {
+  id          String   @id @default(cuid())
+  accountId   String   @map("account_id")
+  symbol      String
+  quantity    Decimal  @db.Decimal(20, 8)
+  marketValue Decimal  @map("market_value") @db.Decimal(18, 4)
+  asOfDate    DateTime @map("as_of_date") @db.Date
+
+  account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, symbol, asOfDate])
+  @@map("investment_holdings_history")
+  @@schema("app")
+}
+
+enum InvestmentTradeType {
+  buy
+  sell
+  dividend
+  interest
+  fee
+  deposit
+  withdrawal
+
+  @@schema("app")
+}
+
+model InvestmentTransaction {
+  id         String              @id @default(cuid())
+  accountId  String              @map("account_id")
+  symbol     String?
+  tradeType  InvestmentTradeType @map("trade_type")
+  quantity   Decimal?            @db.Decimal(20, 8)
+  price      Decimal?            @db.Decimal(18, 4)
+  amount     Decimal             @db.Decimal(18, 4)
+  currency   String
+  tradeDate  DateTime            @map("trade_date") @db.Date
+  externalId String?             @map("external_id")
+
+  account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, externalId])
+  @@map("investment_transactions")
+  @@schema("app")
+}
+
+model TargetAllocation {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  bucketName        String  @map("bucket_name")
+  targetWeightPct   Decimal @map("target_weight_pct") @db.Decimal(5, 2)
+  driftThresholdPct Decimal @map("drift_threshold_pct") @db.Decimal(5, 2)
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, bucketName])
+  @@map("target_allocations")
+  @@schema("app")
+}
+
+enum BucketAssignmentSource {
+  user
+  default_rule
+
+  @@schema("app")
+}
+
+model HoldingBucketAssignment {
+  userId     String                 @map("user_id")
+  symbol     String
+  bucketName String                 @map("bucket_name")
+  assignedBy BucketAssignmentSource @default(user) @map("assigned_by")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, symbol])
+  @@map("holding_bucket_assignments")
+  @@schema("app")
+}
+
+// =========================================================================
+// Alerts
+// =========================================================================
+
+enum AlertRuleType {
+  budget_over_target
+  emergency_fund_below_floor
+  portfolio_drift
+  sinking_fund_underfunded
+  recurring_amount_changed
+  recurring_missed
+  large_transaction
+  low_balance
+
+  @@schema("app")
+}
+
+model AlertRule {
+  id            String        @id @default(cuid())
+  userId        String        @map("user_id")
+  ruleType      AlertRuleType @map("rule_type")
+  config        Json
+  categoryId    String?       @map("category_id")
+  accountId     String?       @map("account_id")
+  sinkingFundId String?       @map("sinking_fund_id")
+  isActive      Boolean       @default(true) @map("is_active")
+
+  user    AppUser           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account FinancialAccount? @relation(fields: [accountId], references: [id])
+
+  events AlertEvent[]
+
+  @@index([userId])
+  @@map("alert_rules")
+  @@schema("app")
+}
+
+model AlertEvent {
+  id                String    @id @default(cuid())
+  alertRuleId       String?   @map("alert_rule_id")
+  userId            String    @map("user_id")
+  severity          String
+  title             String
+  message           String
+  relatedEntityType String?   @map("related_entity_type")
+  relatedEntityId   String?   @map("related_entity_id")
+  triggeredAt       DateTime  @default(now()) @map("triggered_at")
+  acknowledgedAt    DateTime? @map("acknowledged_at")
+  resolvedAt        DateTime? @map("resolved_at")
+
+  alertRule AlertRule? @relation(fields: [alertRuleId], references: [id])
+  user      AppUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, triggeredAt(sort: Desc)])
+  @@map("alert_events")
+  @@schema("app")
+}
+
+// =========================================================================
+// Import & onboarding
+// =========================================================================
+
+model ImportBatch {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id")
+  accountId        String   @map("account_id")
+  sourceFilename   String   @map("source_filename")
+  rowCount         Int      @map("row_count")
+  importedCount    Int      @default(0) @map("imported_count")
+  duplicateCount   Int      @default(0) @map("duplicate_count")
+  errorCount       Int      @default(0) @map("error_count")
+  status           String   @default("pending")
+  columnMapping    Json?    @map("column_mapping")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user        AppUser          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account     FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@map("import_batches")
+  @@schema("app")
+}
+
+model CsvImportTemplate {
+  id                    String  @id @default(cuid())
+  userId                String  @map("user_id")
+  institutionName       String  @map("institution_name")
+  columnMapping         Json    @map("column_mapping")
+  dateFormat            String  @map("date_format")
+  amountSignConvention  String  @map("amount_sign_convention")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, institutionName])
+  @@map("csv_import_templates")
+  @@schema("app")
+}
+
+model CategoryTemplate {
+  id          String @id @default(cuid())
+  name        String @unique
+  description String?
+
+  items CategoryTemplateItem[]
+
+  @@map("category_templates")
+  @@schema("app")
+}
+
+model CategoryTemplateItem {
+  id                 String       @id @default(cuid())
+  categoryTemplateId String       @map("category_template_id")
+  name               String
+  parentName         String?      @map("parent_name")
+  kind               CategoryKind
+  budgetType         BudgetType   @default(none) @map("budget_type")
+  icon               String?
+  color              String?
+  sortOrder          Int          @default(0) @map("sort_order")
+
+  categoryTemplate CategoryTemplate @relation(fields: [categoryTemplateId], references: [id], onDelete: Cascade)
+
+  @@map("category_template_items")
+  @@schema("app")
+}
