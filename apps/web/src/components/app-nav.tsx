@@ -30,7 +30,7 @@ const NAV_ITEMS = [
 export function DesktopNav() {
   const pathname = usePathname();
   return (
-    <nav className="hidden md:flex items-center gap-1 border-b border-border px-6 h-14">
+    <nav className="sticky top-0 z-40 hidden md:flex items-center gap-1 border-b border-border bg-background/80 px-6 h-14 backdrop-blur-sm">
       <span className="font-semibold mr-6">Meadow</span>
       {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
         const active = pathname.startsWith(href);
