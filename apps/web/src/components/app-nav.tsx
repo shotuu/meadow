@@ -2,36 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  ArrowLeftRight,
-  Landmark,
-  PiggyBank,
-  Tags,
-  Repeat,
-  BellRing,
-  Settings,
-} from "lucide-react";
+import Image from "next/image";
+import { MoreHorizontal } from "lucide-react";
 import { Tabbar, TabbarLink } from "konsta/react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
-
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
-  { href: "/accounts", label: "Accounts", icon: Landmark },
-  { href: "/budgets", label: "Budgets", icon: PiggyBank },
-  { href: "/categories", label: "Categories", icon: Tags },
-  { href: "/recurring", label: "Recurring", icon: Repeat },
-  { href: "/alerts", label: "Alerts", icon: BellRing },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
+import { NAV_ITEMS, PRIMARY_NAV_ITEMS, MORE_NAV_ITEMS } from "@/lib/nav-items";
 
 export function DesktopNav() {
   const pathname = usePathname();
   return (
     <nav className="sticky top-0 z-40 hidden md:flex items-center gap-1 border-b border-border bg-background/80 px-6 h-14 backdrop-blur-sm">
-      <span className="font-semibold mr-6">Meadow</span>
+      <Link href="/dashboard" className="flex items-center gap-2 mr-6">
+        <Image src="/logo.png" alt="" width={24} height={24} className="rounded-md" />
+        <span className="font-semibold">Meadow</span>
+      </Link>
       {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
         const active = pathname.startsWith(href);
         return (
@@ -59,11 +44,14 @@ export function DesktopNav() {
 
 export function MobileTabbar() {
   const pathname = usePathname();
+  const onMoreSection =
+    pathname.startsWith("/more") || MORE_NAV_ITEMS.some(({ href }) => pathname.startsWith(href));
   return (
-    // Icon-only, not `labels` — at 8 top-level sections, icon+label per tab
-    // no longer fits a phone-width bottom bar without cramping/wrapping.
+    // Icon-only, not `labels` — even at 5 tabs (4 primary + More), labels
+    // crowd a phone-width bottom bar; see the "Nav growth" note in
+    // PROGRESS.md for why this went icon-only in the first place.
     <Tabbar className="md:hidden fixed bottom-0 left-0 right-0 z-50">
-      {NAV_ITEMS.map(({ href, label, icon: Icon }) => (
+      {PRIMARY_NAV_ITEMS.map(({ href, label, icon: Icon }) => (
         <TabbarLink
           key={href}
           component={Link}
@@ -72,6 +60,12 @@ export function MobileTabbar() {
           icon={<Icon className="size-5" />}
         />
       ))}
+      <TabbarLink
+        component={Link}
+        linkProps={{ href: "/more", "aria-label": "More" }}
+        active={onMoreSection}
+        icon={<MoreHorizontal className="size-5" />}
+      />
     </Tabbar>
   );
 }
