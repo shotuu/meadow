@@ -42,6 +42,24 @@ export function DesktopNav() {
   );
 }
 
+// A colored pill that scales in with a slight overshoot ("pop") behind the
+// active tab's icon, plus a bolder stroke — Konsta's own active-state
+// styling wasn't visually distinct enough on its own (no color change, just
+// an internal class toggle), so this is fully self-contained rather than
+// depending on its theme variables.
+function MobileNavIcon({ icon: Icon, active }: { icon: (typeof PRIMARY_NAV_ITEMS)[number]["icon"]; active: boolean }) {
+  return (
+    <span
+      className={cn(
+        "flex size-9 items-center justify-center rounded-full transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-90",
+        active ? "scale-110 bg-primary/15 text-primary" : "scale-100 text-muted-foreground"
+      )}
+    >
+      <Icon className="size-5" strokeWidth={active ? 2.4 : 1.8} />
+    </span>
+  );
+}
+
 export function MobileTabbar() {
   const pathname = usePathname();
   const onMoreSection =
@@ -51,20 +69,23 @@ export function MobileTabbar() {
     // crowd a phone-width bottom bar; see the "Nav growth" note in
     // PROGRESS.md for why this went icon-only in the first place.
     <Tabbar className="md:hidden fixed bottom-0 left-0 right-0 z-50">
-      {PRIMARY_NAV_ITEMS.map(({ href, label, icon: Icon }) => (
-        <TabbarLink
-          key={href}
-          component={Link}
-          linkProps={{ href, "aria-label": label }}
-          active={pathname.startsWith(href)}
-          icon={<Icon className="size-5" />}
-        />
-      ))}
+      {PRIMARY_NAV_ITEMS.map(({ href, label, icon }) => {
+        const active = pathname.startsWith(href);
+        return (
+          <TabbarLink
+            key={href}
+            component={Link}
+            linkProps={{ href, "aria-label": label }}
+            active={active}
+            icon={<MobileNavIcon icon={icon} active={active} />}
+          />
+        );
+      })}
       <TabbarLink
         component={Link}
         linkProps={{ href: "/more", "aria-label": "More" }}
         active={onMoreSection}
-        icon={<MoreHorizontal className="size-5" />}
+        icon={<MobileNavIcon icon={MoreHorizontal} active={onMoreSection} />}
       />
     </Tabbar>
   );
