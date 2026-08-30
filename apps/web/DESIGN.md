@@ -110,10 +110,20 @@ picks either up the same way (`/icon.png`, `<link rel="icon">` etc. added
 to `<head>` automatically), see
 `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/01-metadata/app-icons.md`.
 If you regenerate the icon again, the `apps/web/src/proxy.ts` matcher
-excludes `icon`/`apple-icon` by literal prefix match, so `icon.png` and any
-future `icon2.png`-style numbered variant stay excluded automatically —
-don't forget this if the icon convention changes to something the prefix
-match wouldn't catch.
+excludes `icon`/`apple-icon`/`logo` by literal prefix match, so `icon.png`
+and any future `icon2.png`-style numbered variant stay excluded
+automatically — don't forget this if the icon convention changes to
+something the prefix match wouldn't catch.
+
+`public/logo.png` (a copy of `icon.png`, used inline next to the "Meadow"
+wordmark in `DesktopNav`, added 2026-08-31) hit this exact bug on first
+deploy: unauthenticated *and* authenticated requests for it 307-redirected
+to `/sign-in` because `logo` wasn't yet in the matcher's exclusion list,
+which also broke Next's `/_next/image` optimizer (it re-fetches the
+original path server-side, so the redirect poisoned that too, returning a
+400 instead of an optimized image). Same root cause as the icon/privacy
+bugs above — every new public static asset needs an entry here, it's not
+automatic just because the file lives outside `src/app/(app)/`.
 
 ## Radius
 
