@@ -100,11 +100,27 @@ cream tulip-and-leaves glyph (`#F6F7E9`) on the primary emerald/teal
 (`#3A9979`) field. Generated externally (not hand-authored SVG like the v1
 icon was), then color-corrected in-repo to the exact brand hex (the raw
 generation was close but not pixel-exact — `#568A7B`/`#F3F3E7` measured vs.
-the `#3A9979`/`#F6F7E9` targets) and cropped to a transparent-cornered
+the `#3A9979`/`#F6F7E9` targets).
+
+**Full-bleed square, not pre-rounded** (fixed 2026-08-31): the original
+2026-08-28 processing cropped this to a transparent-cornered rounded
 square via a chroma-threshold mask (the source file's "transparent"
 background was actually a baked-in checkerboard pattern with full opacity
 throughout, `alpha=255` everywhere — real alpha had to be reconstructed
-from color content, not read from the file). Static image files, not a
+from color content, not read from the file). That was backwards from
+Apple's actual guidance: iOS app icons must be a full-bleed square with
+*no* pre-applied transparency or corner rounding — the OS applies its own
+mask at render time, and a source image that's already been cropped
+collides with that, producing a visible gap/seam at the edges (reported
+by the user as "the edges aren't filled out" on an iPhone home screen).
+Fixed by flattening every non-fully-opaque pixel (all confirmed to be
+mask-edge antialiasing artifacts, not real glyph content, by checking
+that partial-alpha pixels only ever occurred near the outer border) onto
+a solid `#3A9979` backdrop, so the PNG is now edge-to-edge opaque with no
+alpha channel variation at all. If this icon is regenerated again, keep
+it full-bleed — do not re-introduce a pre-cropped/rounded corner mask.
+`public/logo.png` (the nav wordmark icon) is a direct copy of `icon.png`
+and needs to be re-copied if `icon.png` changes. Static image files, not a
 `next/og`-generated route like v1's `icon.tsx` — Next's file convention
 picks either up the same way (`/icon.png`, `<link rel="icon">` etc. added
 to `<head>` automatically), see
