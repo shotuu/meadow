@@ -556,6 +556,66 @@ with `docker start meadow-postgres` (it's created, just needs starting
 after a machine restart); if it's ever recreated, use
 `-p 5433:5432` to match `DATABASE_URL` in `.env`.
 
+**Git repo initialized and pushed, UI polish pass, redeployed (2026-08-30):**
+this repo had never had a single commit before this session (matches the
+"no Git remote/CI at all" gap noted below). Initial commit (152 files) made
+and pushed to `https://github.com/shotuu/meadow` (`origin/main`) — no CI
+wired up yet, still manual `railway deploy`/`railway up` for actual
+deploys, but the code now has real version history and a backup off the
+local machine.
+
+Also fixed real bugs found while addressing user feedback that the app
+"doesn't feel professional":
+- **Font bug**: `apps/web/src/app/globals.css`'s `@theme inline` block had
+  `--font-sans: var(--font-sans)` — a self-reference, not pointing at the
+  actual loaded font (`--font-geist-sans` from `layout.tsx`). The whole app
+  had been silently rendering in a fallback system font since day one
+  despite Geist Sans being loaded and DESIGN.md claiming it was in use.
+  One-line fix.
+- **Theme toggle added**: `apps/web/src/components/theme-toggle.tsx` — a
+  gap where `next-themes` was fully wired (`defaultTheme="system"`,
+  DESIGN.md documents a full light/dark palette) but no UI control existed
+  for a user to actually switch it. Standard shadcn dropdown pattern using
+  CSS `dark:` crossfade (not client-state) to avoid hydration issues. Wired
+  into `DesktopNav` (top-right) and a new "Appearance" card on
+  `/settings` (mobile has no room for it in the bottom tabbar).
+- **Konsta hydration mismatch fixed** (was a real, reproducible console
+  error on every page load, not cosmetic): `providers.tsx`'s
+  `KonstaThemeBridge` fed `next-themes`' `resolvedTheme` straight into
+  Konsta's `dark` prop. `next-themes` reads `localStorage` synchronously on
+  the client's first hydrating render (to avoid a full-page flash), so it's
+  already one render pass ahead of the server, which has no theme info at
+  all — Konsta then emitted different classNames server vs. client on that
+  first render. Fixed with a `useSyncExternalStore`-based mount guard that
+  defers to the server's value (`false`) until after hydration — this
+  repo's lint config (`react-hooks/set-state-in-effect`) disallows the more
+  common `useEffect(() => setMounted(true), [])` pattern, so
+  `useSyncExternalStore`'s server-snapshot fallback was used instead.
+  Verified via a clean console and no error overlay across repeated fresh
+  loads (previously present every time).
+- **Sticky desktop nav**: `DesktopNav` was a static bar that scrolled away
+  with page content — now `sticky top-0` with a translucent blurred
+  background.
+- **Deliberately not touched**: shadows, card/background contrast, other
+  color-token changes. This app's shadcn Nova preset is a flat,
+  shadow-free, ring-based design language by deliberate choice (confirmed
+  by grepping — no `shadow-*` class anywhere in `Button` or `Card`), not an
+  oversight, and DESIGN.md already documents real color-science rationale
+  (WCAG/CVD-validated) for the palette. Pages with actual data (Categories,
+  Budgets) already read clean; the sparse feel on Dashboard/Accounts/
+  Transactions is the empty local DB, not the design system.
+- Redeployed `web` only to Railway (`railway up --service web --ci`) —
+  build succeeded, no pending Prisma migration (no schema change this
+  session), live and returning 200 at
+  `https://web-production-9f3f6.up.railway.app`. `worker` untouched, not
+  redeployed (no changes to it this session).
+- All changes verified: `tsc --noEmit`, `eslint`, `vitest` (43/43) all
+  clean; visually click-tested in the browser (both light/dark, the theme
+  toggle actually switching the palette, the sticky nav via computed
+  styles since the browser-automation tool's window resize still doesn't
+  affect the actual screenshot capture viewport — same known limitation
+  noted in the visual-polish pass below).
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)
@@ -745,12 +805,17 @@ Phase 5 (recurring detection), Phase 6 (alerts, 6/8 rule types), plus FX
 conversion — see the Status section for what was verified for each. A
 visual-polish pass (charts, progress meters, icons, empty states, loading
 skeletons across all 8 pages) was also completed and deployed the same
-day — see the Status section's "Visual polish pass" writeup. Everything
-has been deployed to Railway; double check the *latest* local changes have
-actually been pushed before assuming production is current, since deploys
-in this project are manual `railway deploy` calls, not CI-triggered on
-every change. The local dev DB is a clean slate (all test data wiped after
-each verification pass).
+day — see the Status section's "Visual polish pass" writeup. As of
+2026-08-30 the repo also has real git history (pushed to
+`https://github.com/shotuu/meadow`) and a round of UI-feedback-driven bug
+fixes (font, theme toggle, a real hydration mismatch, sticky nav) — see
+that Status section entry. Everything has been deployed to Railway; double
+check the *latest* local changes have actually been pushed before assuming
+production is current, since deploys in this project are manual
+`railway deploy`/`railway up` calls, not CI-triggered on every change
+(no GitHub Actions/CI wired up yet, even though the repo is now on GitHub).
+The local dev DB is a clean slate (all test data wiped after each
+verification pass).
 
 With all phases built and the UI no longer bare, remaining work is smaller
 polish/verification items rather than new integrations:
