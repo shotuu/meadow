@@ -72,9 +72,9 @@ export default async function TransactionsPage() {
 
   return (
     <div className="mx-auto max-w-4xl p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold">Transactions</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ImportCsvDialog accounts={accounts} />
           <NewTransactionDialog accounts={accounts} categories={categories} />
         </div>
