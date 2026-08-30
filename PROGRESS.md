@@ -755,6 +755,38 @@ vague "make it nicer" asks:
   clean; deployed to Railway (`web` only, no worker/schema changes) and
   spot-checked live after each deploy.
 
+**Investment holdings charts on Accounts (2026-08-31):** closed the
+long-standing "no dedicated investment-holdings dashboard UI" gap, scoped
+to where the real data actually is (the user's live IBKR account) rather
+than adding charts to still-empty budget/transaction pages. New
+`apps/web/src/app/(app)/accounts/holdings-section.tsx` (+
+`holdings-allocation-chart.tsx`, `portfolio-value-chart.tsx`), rendered on
+Accounts above the Assets/Liabilities list:
+- **Portfolio value over time** — an area chart from `InvestmentHoldingHistory`
+  (grouped by `asOfDate`, summed across the user's IBKR accounts). That
+  table was already being written on every sync (`ibkr-sync/src/sync.ts`)
+  but never read anywhere — no new schema/worker changes needed. Shows a
+  graceful "Building up history" note instead of a broken/empty chart when
+  fewer than 2 snapshots exist yet (true in production right now, only one
+  sync has happened since the account was connected).
+- **Allocation by holding** — reuses `summarizeSpendByCategory` from
+  `finance-logic` verbatim (top 4 + "Other" bucketing), just fed holdings
+  instead of spend rows. `assetClassTag` exists on the `InvestmentHolding`
+  schema but `ibkr-sync` never actually populates it (confirmed via grep,
+  not assumed), so this groups by symbol, not asset class.
+- **Per-holding unrealized gain/loss** (`marketValue - avgCost * quantity`,
+  guarded for holdings with no cost basis) in a plain list below the
+  charts, color-coded positive/negative matching the app's existing
+  convention.
+- Verified against synthetic local data (5 symbols, 7 days of history,
+  deliberately mixed gains/losses) in both light and dark mode before
+  touching production — gain/loss math and dashboard net-worth cross-check
+  both confirmed correct — then cleaned up (local dev DB back to zero
+  accounts). Deployed and spot-checked against the real account afterward:
+  allocation chart renders correctly across all 13 real holdings: the
+  history chart correctly shows its "building up" empty state rather than
+  a broken one since production only has one sync snapshot so far.
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)
@@ -967,9 +999,12 @@ polish/verification items rather than new integrations:
   either a UI for the user to set target allocations, or deciding to skip
   it since this is a single-user app and the user may just check IBKR
   directly.
-- No dedicated investment-holdings dashboard UI — holdings/balance show
-  on the accounts page, but there's no per-holding detail view, cost
-  basis, unrealized gain/loss, or allocation chart.
+- ~~No dedicated investment-holdings dashboard UI~~ Done 2026-08-31 — see
+  the Status section. A portfolio-value-over-time chart, an allocation
+  chart by holding, and per-holding unrealized gain/loss now render on
+  Accounts. Not built: a true per-holding detail page (cost basis history,
+  transaction log per symbol) — the current view is a summary, not a
+  drill-down.
 - Actually configure at least one `AlertRule` for the real account (the
   `/alerts` UI and evaluator both work, but as of this writing zero rules
   are configured for actual ongoing use — everything verified so far used
