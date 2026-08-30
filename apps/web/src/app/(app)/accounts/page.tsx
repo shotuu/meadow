@@ -87,9 +87,9 @@ export default async function AccountsPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold">Accounts</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ConnectPlaidButton />
           <ConnectIbkrDialog />
           <NewAccountDialog defaultCurrency={appUser.defaultCurrency} />
