@@ -27,11 +27,34 @@ export default async function DashboardPage() {
     }),
   ]);
 
+  // IBKR-synced accounts have no Transaction rows at all -- their balance
+  // comes from InvestmentHolding market values instead (latest asOfDate per
+  // symbol). Mirrors accounts/page.tsx's balance computation so net worth
+  // here doesn't silently exclude every brokerage account.
+  const balanceByAccount = new Map<string, number>(
+    accounts.map((a) => [a.id, a.transactions.reduce((sum, t) => sum + Number(t.amount), 0)])
+  );
+  const ibkrAccountIds = accounts.filter((a) => a.syncSource === "ibkr_flex").map((a) => a.id);
+  if (ibkrAccountIds.length > 0) {
+    const holdings = await prisma.investmentHolding.findMany({
+      where: { accountId: { in: ibkrAccountIds } },
+    });
+    const latestBySymbol = new Map<string, (typeof holdings)[number]>();
+    for (const h of holdings) {
+      const key = `${h.accountId}:${h.symbol}`;
+      const existing = latestBySymbol.get(key);
+      if (!existing || h.asOfDate > existing.asOfDate) latestBySymbol.set(key, h);
+    }
+    for (const h of latestBySymbol.values()) {
+      balanceByAccount.set(h.accountId, (balanceByAccount.get(h.accountId) ?? 0) + Number(h.marketValue));
+    }
+  }
+
   const byCurrency = summarizeByClassification(
     accounts.map((account) => ({
       classification: account.classification,
       currency: account.currency,
-      balance: account.transactions.reduce((sum, t) => sum + Number(t.amount), 0),
+      balance: balanceByAccount.get(account.id) ?? 0,
     }))
   );
 
