@@ -2,6 +2,16 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# @prisma/config@7.10.0 (current latest stable) hard-pins deepmerge-ts@7.1.5,
+# which has a known high-severity stack-exhaustion advisory; no stable Prisma
+# release fixes it yet (8.x is still RC-only). @prisma/config only merges our
+# own prisma.config.ts/CLI-flag objects during `prisma generate`/`migrate`/
+# `seed` -- never reachable by request-time/attacker input -- but forcing the
+# patched version here is low-risk and closes the alert. Verified db:generate
+# and db:migrate still work correctly against real Postgres after this.
+overrides:
+  deepmerge-ts: "^8.0.2"
+
 allowBuilds:
   '@google/genai': true
   '@prisma/client': true
