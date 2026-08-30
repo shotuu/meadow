@@ -21,6 +21,7 @@ import { formatMoney } from "@/lib/format";
 import { summarizeByClassification } from "@/lib/balances";
 import { CompositionChart } from "@/components/composition-chart";
 import { EmptyState } from "@/components/empty-state";
+import { HoldingsSection } from "./holdings-section";
 
 const ACCOUNT_TYPE_ICON: Record<string, LucideIcon> = {
   checking: Wallet,
@@ -58,10 +59,26 @@ export default async function AccountsPage() {
   // per symbol), not the transaction sum every other sync source uses.
   const ibkrAccountIds = accounts.filter((a) => a.syncSource === "ibkr_flex").map((a) => a.id);
   const holdingCountByAccount = new Map<string, number>();
+  const latestHoldings: {
+    symbol: string;
+    quantity: number;
+    avgCost: number | null;
+    marketValue: number;
+    currency: string;
+  }[] = [];
+  let portfolioHistory: { asOfDate: Date; value: number }[] = [];
   if (ibkrAccountIds.length > 0) {
-    const holdings = await prisma.investmentHolding.findMany({
-      where: { accountId: { in: ibkrAccountIds } },
-    });
+    const [holdings, historyRows] = await Promise.all([
+      prisma.investmentHolding.findMany({
+        where: { accountId: { in: ibkrAccountIds } },
+      }),
+      prisma.investmentHoldingHistory.groupBy({
+        by: ["asOfDate"],
+        where: { accountId: { in: ibkrAccountIds } },
+        _sum: { marketValue: true },
+        orderBy: { asOfDate: "asc" },
+      }),
+    ]);
     const latestBySymbol = new Map<string, (typeof holdings)[number]>();
     for (const h of holdings) {
       const key = `${h.accountId}:${h.symbol}`;
@@ -71,8 +88,18 @@ export default async function AccountsPage() {
     for (const h of latestBySymbol.values()) {
       balanceByAccount.set(h.accountId, (Number(balanceByAccount.get(h.accountId)) || 0) + Number(h.marketValue));
       holdingCountByAccount.set(h.accountId, (holdingCountByAccount.get(h.accountId) ?? 0) + 1);
+      latestHoldings.push({
+        symbol: h.symbol,
+        quantity: Number(h.quantity),
+        avgCost: h.avgCost !== null ? Number(h.avgCost) : null,
+        marketValue: Number(h.marketValue),
+        currency: h.currency,
+      });
     }
+    portfolioHistory = historyRows.map((r) => ({ asOfDate: r.asOfDate, value: Number(r._sum.marketValue ?? 0) }));
   }
+
+  const ibkrCurrency = accounts.find((a) => a.syncSource === "ibkr_flex")?.currency ?? appUser.defaultCurrency;
 
   const assets = accounts.filter((a) => a.classification === "asset");
   const liabilities = accounts.filter((a) => a.classification === "liability");
@@ -109,6 +136,10 @@ export default async function AccountsPage() {
             </Card>
           ))}
         </div>
+      )}
+
+      {latestHoldings.length > 0 && (
+        <HoldingsSection holdings={latestHoldings} history={portfolioHistory} currency={ibkrCurrency} />
       )}
 
       <AccountGroup
