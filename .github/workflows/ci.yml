@@ -22,6 +22,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # `tsc --noEmit` alone fails on a fresh checkout: Next.js 16's typed
+      # routes (e.g. `LayoutProps<"/">` in layout.tsx) are ambient types
+      # generated into .next/types by the Next CLI, not hand-written —
+      # locally this "just works" because a prior `next dev`/`build` already
+      # generated them, but CI starts with no .next directory at all.
+      - name: Generate Next.js route types
+        run: pnpm --filter web exec next typegen
+
       - name: Typecheck web
         run: pnpm --filter web exec tsc --noEmit
 
