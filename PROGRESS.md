@@ -697,6 +697,64 @@ independently re-verified:
   ("connected to database, scheduling jobs" / "scheduled jobs registered,
   idling"), both services confirmed Online afterward.
 
+**UI feedback round 2 — real net-worth bug, nav overhaul (2026-08-31):**
+prompted by the user actually looking at production (their real IBKR
+account, connected since 2026-08-29) and flagging concrete problems, not
+vague "make it nicer" asks:
+- **Dashboard net worth showed $0.00 despite a real $35,195.84 IBKR
+  account.** Same root cause class as the accounts-page fix from Phase 3:
+  dashboard's balance calc only summed `Transaction` rows, and IBKR
+  accounts have none (balance lives in `InvestmentHolding` instead).
+  `accounts/page.tsx` already had the fix; `dashboard/page.tsx` never got
+  it. Ported the identical latest-per-symbol market-value logic. Confirmed
+  live in production afterward — net worth now reads $35,195.84 correctly.
+- **Mobile nav cut from 8 icon-only tabs to 5**: this was already flagged
+  as the "next real fix" in the 2026-08-28 Nav growth note. Split into
+  `PRIMARY_NAV_ITEMS` (Dashboard, Transactions, Accounts, Budgets, shown
+  directly) and `MORE_NAV_ITEMS` (Categories, Recurring, Alerts, Settings,
+  behind a new `/more` list page). Desktop nav unchanged (still shows all
+  8, plenty of room). Shared nav data lives in `src/lib/nav-items.ts` (no
+  `"use client"`) rather than in `app-nav.tsx` itself — importing a plain
+  data export from a client-component file into the new server-rendered
+  `/more` page broke under the RSC client/server boundary (`.map` wasn't
+  callable on the import at all), not obvious until it was actually tried.
+- **App icon added next to the "Meadow" wordmark** in `DesktopNav`
+  (`public/logo.png`, a copy of `icon.png`). Hit the exact same
+  proxy-matcher bug as the icon.png/apple-icon.png/privacy fixes from
+  2026-08-28 — `/logo.png` 307-redirected to `/sign-in` because `logo`
+  wasn't yet excluded in `proxy.ts`'s matcher, which also broke Next's
+  `/_next/image` optimizer (it re-fetches the original path server-side,
+  so the redirect poisoned that request too, returning 400). Confirmed
+  broken on the actual live deploy, not just reasoned about — every new
+  public static asset needs its own matcher exclusion, it's not automatic.
+- **Page-header buttons overflowing on narrow screens**: Accounts has 3
+  buttons (Connect a bank, Connect IBKR, Add account) in a non-wrapping
+  row next to the title — reported directly as overflowing on a phone.
+  Transactions has the same title+multi-button pattern (Import CSV, Add
+  transaction), same risk, fixed proactively. Both now stack title above
+  buttons below the `sm` breakpoint and wrap the button row, unchanged at
+  `sm` and above.
+- **Mobile tab bar active-state polish**: Konsta's own active-state
+  styling turned out not to be visually distinct at all (an internal class
+  toggle, no actual color change — confirmed via computed styles, not
+  assumed). Built a fully self-contained treatment instead, in markup this
+  app already controls: a primary-tinted pill that scales in with a
+  slight spring overshoot (`cubic-bezier(0.34,1.56,0.64,1)`), plus a
+  bolder icon stroke width when active (2.4 vs 1.8) since Lucide is an
+  outline-only icon set with no separate filled variant to swap to.
+- **Known limitation surfaced again**: the browser-automation tool's
+  `resize_window` still doesn't affect the actual screenshot capture
+  viewport for this session (confirmed via `window.innerWidth` staying at
+  its original value immediately after a resize call) — same issue noted
+  in the 2026-08-29 visual-polish pass. Verified the responsive/nav
+  changes above via compiled-CSS inspection (`grep`ing the built chunk for
+  `.sm\:flex-row{...}`) and DOM/computed-style assertions instead of
+  pixel screenshots at mobile width. Still worth an actual phone check
+  when a human is at the keyboard.
+- All changes: `tsc --noEmit`, `eslint`, `vitest` (43/43), `next build`
+  clean; deployed to Railway (`web` only, no worker/schema changes) and
+  spot-checked live after each deploy.
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)
