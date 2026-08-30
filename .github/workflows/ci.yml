@@ -9,6 +9,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # prisma.config.ts's env("DATABASE_URL") throws eagerly at config-load
+      # time (during `prisma generate`, which runs on every `pnpm install`
+      # via packages/db's postinstall hook) if the variable is unset at
+      # all — even though generate never actually connects to a database.
+      # This placeholder just needs to exist and parse as a connection
+      # string; nothing in this workflow talks to a real Postgres instance.
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
     steps:
       - uses: actions/checkout@v4
 
