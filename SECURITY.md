@@ -69,11 +69,20 @@ be a compromise of the whole system.
   something manually configured in this repo.
 - TypeScript strict mode and ESLint run as part of every build; broken or
   type-unsafe code does not deploy.
-- There is no automated dependency-vulnerability scanner (no Dependabot,
-  Renovate, or Snyk configured) and no defined patch SLA. This repository
-  currently has no Git remote/CI pipeline at all, which is a prerequisite
-  for tools like Dependabot — a real, acknowledged gap, not an oversight
-  papered over here.
+- As of 2026-08-30, GitHub Actions CI (typecheck/lint/test/build on every
+  push) and Dependabot (version updates, security alerts, and automated
+  security-fix PRs) are both live on `github.com/shotuu/meadow`, plus
+  CodeQL static analysis via GitHub's managed default setup. Still no
+  defined patch SLA — alerts are triaged manually as they appear.
+- Dependabot's first real findings (a high-severity `deepmerge-ts` stack
+  exhaustion and a moderate `uuid` buffer-bounds issue, both transitive)
+  were fixed the same day: `node-cron` 3→4 dropped `uuid` from the tree
+  entirely; Prisma 6→7 (a real architecture change — driver adapters
+  replace the Rust query engine) still transitively pins the vulnerable
+  `deepmerge-ts` even at its newest stable release (the actual fix needs
+  Prisma 8, which is RC-only), so a pnpm override forces the patched
+  version instead. Both were verified end-to-end against real local and
+  production Postgres before deploying, not just typechecked.
 
 ## Data retention and deletion
 

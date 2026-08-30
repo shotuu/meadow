@@ -616,6 +616,87 @@ Also fixed real bugs found while addressing user feedback that the app
   affect the actual screenshot capture viewport — same known limitation
   noted in the visual-polish pass below).
 
+**CI, dependency scanning, and a real Prisma 7 migration (2026-08-30):**
+GitHub Actions CI (`.github/workflows/ci.yml`: typecheck web+worker, lint,
+test, build, on every push/PR to `main`) and Dependabot (`.github/
+dependabot.yml` for weekly npm + github-actions version updates, plus
+`vulnerability-alerts`/`automated-security-fixes` enabled via the API) are
+now live, alongside CodeQL via GitHub's managed default-setup (free on this
+public repo). One non-obvious CI gotcha: `tsc --noEmit` alone fails on a
+fresh checkout because Next.js 16's typed routes (`LayoutProps<"/">` etc.)
+are ambient types the Next CLI generates into `.next/types`, not
+hand-written — added a `next typegen` step before typechecking.
+
+Dependabot's first real findings — a high-severity `deepmerge-ts` stack
+exhaustion and a moderate `uuid` buffer-bounds issue, both transitive —
+led to two real dependency upgrades, done via a forked subagent then
+independently re-verified:
+- **node-cron 3.0.3 → 4.6.0** (`apps/worker`): trivial. v4 has zero
+  dependencies (TypeScript rewrite), so `uuid` isn't just patched, it's
+  gone from the tree entirely. No breaking-change exposure (the codebase
+  never used the removed `scheduled`/`runOnInit` options or string-command
+  execution). Verified with a real `pnpm --filter worker start` boot, per
+  this file's own documented past incident about typecheck-passing-but-
+  entrypoint-crashing.
+- **Prisma 6.19.3 → 7.10.0** (`packages/db` and, transitively, every
+  consumer): a real architecture change, not a version bump — v7 drops the
+  Rust query engine for a driver-adapter model (`@prisma/adapter-pg` +
+  `pg`), requires an explicit generator `output` path (client now splits
+  into `client`/`enums`/`models` instead of one bundled file, renamed
+  `generated/client` → `generated/prisma` to match Prisma's own
+  convention), needs a new `packages/db/prisma.config.ts` (v7 no longer
+  reads `package.json#prisma`), and — a real hard error, not just
+  deprecated — `datasource { url = env(...) }` in `schema.prisma` is no
+  longer allowed at all; connection strings now live only in
+  `prisma.config.ts` (CLI) and the adapter passed to `PrismaClient`
+  (runtime). `packages/db/index.ts` now builds a `PrismaPg` adapter from
+  `DATABASE_URL` directly. Blast radius stayed contained to `packages/db`
+  as expected (confirmed via grep: nothing else imports `@prisma/client`
+  directly, no `$use` middleware, no `Prisma.validator` anywhere).
+  Bonus: the old generator's dynamic engine-binary lookup was producing
+  the two Turbopack "traces the whole project" build warnings noted below
+  in Known Gaps — gone now that v7 has no native binary to locate.
+  - **Prisma 7.10.0 does not actually fix the `deepmerge-ts` alert** —
+    `@prisma/config@7.10.0` (the current latest *stable* release) still
+    hard-pins the vulnerable `deepmerge-ts@7.1.5`; the real fix needs
+    Prisma 8, which is RC-only (`8.0.0-rc.12`) as of this writing, not
+    something to put under a production financial app's data layer. Closed
+    the alert properly instead via a `pnpm-workspace.yaml` `overrides:
+    deepmerge-ts: "^8.0.2"` — low-risk since `@prisma/config`'s merge
+    calls only ever touch our own `prisma.config.ts`/CLI-flag objects
+    during `generate`/`migrate`/`seed`, never request-time input at all.
+  - **A CI-only gotcha the local verification never caught**:
+    `prisma.config.ts`'s `env("DATABASE_URL")` throws eagerly at
+    config-load time (during `prisma generate`, which runs on every
+    `pnpm install` via `packages/db`'s postinstall hook) if the variable
+    is unset — even though `generate` never actually connects to a
+    database. Local dev always has `DATABASE_URL` via the `.env` symlinks
+    so this was invisible until the very first CI run after the upgrade;
+    fixed with a harmless placeholder `DATABASE_URL` set at the CI job
+    level.
+  - **SSL risk, investigated and resolved before deploying**: v7's
+    Postgres adapter defaults to strict SSL certificate validation vs.
+    v6's lenient Rust engine, and Railway's Postgres uses a self-signed
+    cert — a real risk of breaking the live production DB connection.
+    Couldn't inspect the production `DATABASE_URL` directly (correctly
+    blocked by the permission system as a live credential); the user
+    checked the Railway dashboard directly and confirmed no `sslmode`
+    parameter is present, which means `pg` won't attempt a TLS handshake
+    at all (no explicit `ssl` option is set in `packages/db/index.ts`
+    either), so there's no certificate to validate either way. Confirmed
+    in practice, not just in theory: the `web` service's pre-deploy
+    `prisma migrate deploy` step connected cleanly to
+    `postgres.railway.internal:5432` in production logs before the app
+    itself was confirmed reachable.
+- Deployed both `web` and `worker` to Railway after full local verification
+  (typecheck/lint/test/build all clean, `pnpm db:migrate` against real
+  local Postgres, a real `pnpm --filter worker start` boot, and a browser
+  click-through against the local dev DB with zero console errors) —
+  `web`'s pre-deploy migration connected to production Postgres
+  successfully, `worker` booted clean in production logs
+  ("connected to database, scheduling jobs" / "scheduled jobs registered,
+  idling"), both services confirmed Online afterward.
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)
@@ -766,9 +847,6 @@ dead pure-function code left in this package as of this session.
   the actual screenshot capture in that session. Code review gives
   reasonable confidence (same fluid-width patterns already verified
   elsewhere), but worth an actual phone or narrow-window check.
-- One cosmetic (non-blocking) Turbopack build warning about Prisma's engine
-  binary lookup getting traced into the proxy/middleware bundle — known
-  upstream Prisma+Next.js interaction, not something to "fix" casually.
 - CSV import currently assumes a single flat header row with one date /
   description / amount / (optional merchant) column each — no support yet
   for the `csv_import_templates` table's intended reusable per-institution
@@ -807,15 +885,18 @@ visual-polish pass (charts, progress meters, icons, empty states, loading
 skeletons across all 8 pages) was also completed and deployed the same
 day — see the Status section's "Visual polish pass" writeup. As of
 2026-08-30 the repo also has real git history (pushed to
-`https://github.com/shotuu/meadow`) and a round of UI-feedback-driven bug
-fixes (font, theme toggle, a real hydration mismatch, sticky nav) — see
-that Status section entry. Everything has been deployed to Railway; double
-check the *latest* local changes have actually been pushed before assuming
-production is current, since deploys in this project are manual
-`railway deploy`/`railway up` calls, not CI-triggered on every change
-(no GitHub Actions/CI wired up yet, even though the repo is now on GitHub).
-The local dev DB is a clean slate (all test data wiped after each
-verification pass).
+`https://github.com/shotuu/meadow`), a round of UI-feedback-driven bug
+fixes (font, theme toggle, a real hydration mismatch, sticky nav), and —
+same day — GitHub Actions CI, Dependabot, CodeQL, and a real Prisma 6→7
+migration that closed two actual dependency vulnerabilities, deployed to
+both `web` and `worker` — see those Status section entries. Everything has
+been deployed to Railway; double check the *latest* local changes have
+actually been pushed before assuming production is current, since
+Railway deploys in this project are still manual `railway deploy`/
+`railway up` calls, not triggered automatically by CI on every push (CI
+runs checks, but there's no CD wired up yet — a natural next step if this
+project ever gets busier). The local dev DB is a clean slate (all test
+data wiped after each verification pass).
 
 With all phases built and the UI no longer bare, remaining work is smaller
 polish/verification items rather than new integrations:
