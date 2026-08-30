@@ -14,7 +14,7 @@
     "@finance-app/plaid-sync": "workspace:*",
     "@finance-app/ibkr-sync": "workspace:*",
     "@google/genai": "^2.19.0",
-    "node-cron": "^3.0.3"
+    "node-cron": "^4.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
