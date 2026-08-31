@@ -1,5 +1,5 @@
 import { prisma } from "@finance-app/db";
-import { getPlaidClient } from "./client";
+import { getPlaidClient, callPlaid } from "./client";
 import { upsertPlaidAccounts } from "./accounts";
 import { applyCategorizationRules } from "./categorize";
 import { decryptSecret } from "@finance-app/crypto";
@@ -27,11 +27,13 @@ export async function syncPlaidItem(plaidItemId: string): Promise<SyncResult> {
   let accountIdByPlaidId: Map<string, string> | null = null;
 
   while (hasMore) {
-    const response = await client.transactionsSync({
-      access_token: accessToken,
-      cursor,
-      count: 500,
-    });
+    const response = await callPlaid(() =>
+      client.transactionsSync({
+        access_token: accessToken,
+        cursor,
+        count: 500,
+      })
+    );
     const data = response.data;
 
     if (!accountIdByPlaidId) {
