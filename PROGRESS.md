@@ -787,6 +787,59 @@ Accounts above the Assets/Liabilities list:
   history chart correctly shows its "building up" empty state rather than
   a broken one since production only has one sync snapshot so far.
 
+**Plaid production access approved, OAuth Link support added (2026-08-31):**
+the user's Plaid Production-access application (the security hardening
+work from 2026-08-28 — encryption at rest, real data deletion, published
+privacy policy — was built specifically for this) was approved. `web` and
+`worker` both switched from Plaid sandbox to production
+(`PLAID_ENV=production`, real production `PLAID_CLIENT_ID`/`PLAID_SECRET`)
+via `railway variable set` directly, not through a file — real credentials
+never touched a repo file or `.env.example`.
+
+Before flipping the switch, checked for gaps sandbox testing couldn't have
+caught: Plaid Link had **no OAuth redirect support at all** — no
+`redirect_uri` passed to `linkTokenCreate`, no callback route. Invisible
+in sandbox (the test institution used for the original Phase 2
+verification doesn't require it), but many large real US banks (Chase,
+BofA, etc.) require Plaid's OAuth flow, which redirects the browser to the
+bank's own site and back — without this, those specific banks would have
+silently failed to connect in production. Built per Plaid's official OAuth
+Link integration guide:
+- `createPlaidLinkToken` now accepts a `redirect_uri`, built from the
+  existing `AUTH_URL` env var (Auth.js's own base-URL var, reused rather
+  than adding a second one) + `/plaid-oauth-callback`.
+- New `apps/web/src/app/(app)/plaid-oauth-callback/page.tsx` — reached
+  only mid-flow when the bank redirects back. Reads the `link_token` that
+  `connect-plaid-button.tsx` now stashes in `localStorage` before opening
+  Link (has to survive navigating away to the bank's own domain), then
+  reinitializes `usePlaidLink` with `receivedRedirectUri` set to resume
+  exactly where the user left off.
+- Shared `onSuccess` handling (the `completePlaidLink` call, refresh,
+  redirect) factored into `use-plaid-link-completion.ts` since both the
+  button and the callback page need identical behavior once Link actually
+  succeeds — real duplication, not a premature abstraction.
+- The `localStorage` read on the callback page uses `useSyncExternalStore`
+  rather than `useState`+`useEffect`, same reasoning as `theme-toggle.tsx`
+  earlier this session — this repo's lint config disallows calling
+  `setState` directly inside an effect body.
+- **Manual step outside the codebase, not done by this work**: the
+  redirect URI (`<AUTH_URL>/plaid-oauth-callback`, almost certainly
+  `https://web-production-9f3f6.up.railway.app/plaid-oauth-callback`
+  unless a custom domain was added since) must be registered by hand in
+  the Plaid Dashboard's Allowed Redirect URIs list — Plaid rejects
+  `linkTokenCreate` calls with an unregistered `redirect_uri`.
+- Verified: full local check suite clean (`tsc`/`eslint`/`vitest`/
+  `next build`), the new route correctly requires auth (307 to sign-in for
+  an unauthenticated request, not a crash). Full interactive OAuth
+  click-through wasn't done this session — the browser-automation tool
+  disconnected mid-session — and genuinely can't be faked anyway since it
+  needs a real bank's OAuth round-trip; worth an actual test with a Chase/
+  BofA-style institution once the redirect URI is registered. Both `web`
+  and `worker` redeployed and confirmed Online afterward (worker needed
+  the redeploy too, since a plain env var change doesn't reach an already-
+  running process — it picked up the new production credentials via
+  restart, confirmed via a clean boot log).
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)
