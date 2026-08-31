@@ -924,6 +924,62 @@ synthetic-data testing had caught:
   against the real production account — the card layout fix visually
   confirmed correct, console clean.
 
+**Manual "Sync now" + a real cost lesson on the balance fix (2026-08-31/
+2026-09-01):** two follow-ups from actually using the app with the real
+BoA account:
+- **Manual sync button**: only triggers were link time and the worker's
+  nightly cron, so a bank connected mid-day would sit with a stale balance
+  *and* uncategorized transactions for up to a day — asked for directly.
+  New `apps/web/src/app/(app)/accounts/sync-now-button.tsx` +
+  `sync-actions.ts`: one button syncs every active Plaid item and IBKR
+  config for the user (not per-account — a single Plaid item covers
+  multiple accounts, so per-account buttons don't map to a real Plaid
+  operation), then runs the AI categorization batch for that user too, in
+  one action. One item/config/step failing doesn't stop the rest.
+  Required moving `apps/worker/src/jobs/categorize.ts` into a new shared
+  package, `packages/categorization-ai` (same reason `plaid-sync`/
+  `ibkr-sync` are shared packages — `apps/web` and `apps/worker` can't
+  import each other), exporting the per-user function that was previously
+  private to the file.
+- **The balance fix from the day before had a real cost problem**:
+  reported directly as "user isn't allowed to access balance" — the
+  dedicated `/accounts/balance/get` call added to `syncPlaidItem` requires
+  Plaid's separately billed Balance product, confirmed via the user's own
+  Plaid dashboard at **$0.10/call**, and it wasn't even enabled. Explored
+  "pull more transaction history instead" as an alternative (verified
+  against the actual SDK types, not assumed) — a real, genuinely free
+  `transactions.days_requested` field exists on `linkTokenCreate` (default
+  90 days, max ~730, no extra-fee language anywhere unlike Asset Reports'
+  explicit "Additional History" fee) — but Plaid's own docs are explicit
+  that *"once Transactions has been added to an Item, this value cannot be
+  updated"* — doesn't help the already-connected BoA account at all, only
+  future ones. Set to 730 days for future connections regardless (free,
+  no downside).
+  - **The actual fix**: swap the paid `accountsBalanceGet` for the free
+    `accountsGet` (the exact same call `link.ts`'s `linkPlaidItem` already
+    makes successfully — proof it works without Balance enabled). Its
+    balance data is bundled with base Item access; per Plaid's own docs it
+    stays "at least as recent as the most recent Transaction update,"
+    which happens every sync anyway. Also fixes a real correctness gap the
+    original design had: `transactionsSync`'s own accounts array only
+    includes accounts with associated transactions in that response, so a
+    quiet account (the $0 savings account, 0 transactions) would never
+    have gotten a balance refresh that way even with the paid endpoint.
+  - Verified end-to-end against the real account via the new Sync now
+    button, not just locally: Advantage Savings went from a permanently
+    stuck $0.00 to a real $10.00 (proof the old transaction-sum approach
+    literally could never have shown this, zero-activity or not), and the
+    checking account corrected from $29,530.46 to $32,296.96 — a real
+    ~$2,766 difference, confirming the original transaction-sum drift was
+    substantial, not theoretical. AI categorization also confirmed working
+    end-to-end in the same pass: every previously-uncategorized real
+    transaction got a real category. Zero console/server errors after.
+  - **Lesson for future sessions**: when a fix touches Plaid, check
+    whether the endpoint requires a separately billed product *before*
+    wiring it in — `getPlaidClient()`/`callPlaid()` succeeding in dev/
+    sandbox doesn't confirm a production billing gate isn't waiting behind
+    it, since sandbox often doesn't enforce these.
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)
