@@ -86,7 +86,7 @@ function SeriesGroup({
       <div className={`grid gap-3 ${muted ? "opacity-60" : ""}`}>
         {items.map((s) => (
           <Card key={s.id}>
-            <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardHeader className="flex items-center justify-between space-y-0">
               <div>
                 <CardTitle className="text-base">
                   {s.transactions[0]?.transaction.merchantName ?? s.merchantKey}

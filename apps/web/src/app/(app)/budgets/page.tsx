@@ -100,7 +100,7 @@ async function RecurringBudgetCard({
   if (!budget) {
     return (
       <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardHeader className="flex items-center justify-between space-y-0">
           <CardTitle className="text-base">{category.name}</CardTitle>
           <SetBudgetDialog
             categoryId={category.id}
@@ -173,7 +173,7 @@ async function RecurringBudgetCard({
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex items-center justify-between space-y-0">
         <div>
           <CardTitle className="text-base">{category.name}</CardTitle>
           <p className="text-sm text-muted-foreground">
@@ -216,7 +216,7 @@ function SinkingFundCard({
 }) {
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex items-center justify-between space-y-0">
         <CardTitle className="text-base">{category.name}</CardTitle>
         <AddSinkingFundDialog categoryId={category.id} defaultCurrency={defaultCurrency} />
       </CardHeader>

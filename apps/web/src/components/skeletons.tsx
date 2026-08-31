@@ -6,7 +6,7 @@ export function CardGridSkeleton({ count = 3 }: { count?: number }) {
     <div className="grid gap-3">
       {Array.from({ length: count }).map((_, i) => (
         <Card key={i}>
-          <CardHeader className="flex-row items-center justify-between space-y-0">
+          <CardHeader className="flex items-center justify-between space-y-0">
             <Skeleton className="h-5 w-32" />
             <Skeleton className="h-5 w-20" />
           </CardHeader>
