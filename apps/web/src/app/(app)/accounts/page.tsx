@@ -194,7 +194,7 @@ function AccountGroup({
           const Icon = ACCOUNT_TYPE_ICON[account.type] ?? CircleDollarSign;
           return (
           <Card key={account.id}>
-            <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardHeader className="flex items-center justify-between space-y-0">
               <div className="flex items-center gap-3">
                 <Icon className="size-5 shrink-0 text-muted-foreground" />
                 <div>

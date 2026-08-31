@@ -106,7 +106,7 @@ export default async function AlertsPage() {
         <div className="grid gap-3">
           {rules.map((rule) => (
             <Card key={rule.id}>
-              <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardHeader className="flex items-center justify-between space-y-0">
                 <div className="flex items-center gap-2">
                   {rule.isActive ? (
                     <BellRing className="size-4 shrink-0 text-muted-foreground" />
