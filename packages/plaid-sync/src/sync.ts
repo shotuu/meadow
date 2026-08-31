@@ -103,11 +103,19 @@ export async function syncPlaidItem(plaidItemId: string): Promise<SyncResult> {
     hasMore = data.has_more;
   }
 
-  // A dedicated, real-time balance refresh -- deliberately not reusing the
-  // (possibly cached, per Plaid's own docs) account balances already seen
-  // in the transactionsSync pages above.
-  const balanceResponse = await callPlaid(() => client.accountsBalanceGet({ access_token: accessToken }));
-  await refreshPlaidAccountBalances(item.userId, balanceResponse.data.accounts);
+  // accountsGet, not the dedicated /accounts/balance/get -- the latter is a
+  // separately billed, forced real-time refresh (confirmed against this
+  // app's real Plaid account: $0.10/call, and the product isn't even
+  // enabled). accountsGet's balance is bundled with the free Item access
+  // this app already has (same call link.ts's linkPlaidItem already makes),
+  // just not forced-fresh -- Plaid's own docs say it stays "at least as
+  // recent as the most recent Transaction update," which is exactly what
+  // just happened above, every sync. Covers every account under the Item
+  // regardless of transaction activity, unlike transactionsSync's own
+  // accounts array (only accounts with associated transactions appear
+  // there, so a quiet account's balance would never refresh that way).
+  const accountsResponse = await callPlaid(() => client.accountsGet({ access_token: accessToken }));
+  await refreshPlaidAccountBalances(item.userId, accountsResponse.data.accounts);
 
   await prisma.plaidItem.update({
     where: { id: item.id },

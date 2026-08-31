@@ -23,6 +23,14 @@ export async function createPlaidLinkToken(userId: string, redirectUri?: string)
       country_codes: [CountryCode.Us],
       user: { client_user_id: userId },
       products: [Products.Transactions],
+      // Default is 90 days if unset, and per Plaid's own docs this cannot
+      // be changed later once Transactions has been added to an Item --
+      // only takes effect for accounts connected from here on, not
+      // already-linked ones. No extra-fee language anywhere in Plaid's
+      // docs for this (unlike Asset Reports' explicit "Additional History"
+      // fee), so this is free -- Transactions is billed per connected
+      // Item, not per day of history.
+      transactions: { days_requested: 730 },
       ...(redirectUri && { redirect_uri: redirectUri }),
     })
   );
