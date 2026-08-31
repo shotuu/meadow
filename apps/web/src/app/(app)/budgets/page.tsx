@@ -3,16 +3,8 @@ import { prisma, Prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import {
-  buildPeriodChain,
-  computeMonthlyResetBudget,
-  computeRequiredContribution,
-  computeRolloverEnvelopeBudget,
-  computeSafeToSpendPerDay,
-  MAX_ROLLOVER_LOOKBACK_PERIODS,
-  type BudgetPeriodKind,
-  type PeriodActuals,
-} from "@finance-app/finance-logic";
+import { computeRequiredContribution } from "@finance-app/finance-logic";
+import { computeRecurringBudgetProgress } from "@/lib/budget-progress";
 import { SetBudgetDialog } from "./set-budget-dialog";
 import { AddSinkingFundDialog, ContributeForm } from "./sinking-fund-dialog";
 import { PeriodChart } from "./period-chart";
@@ -114,61 +106,12 @@ async function RecurringBudgetCard({
     );
   }
 
-  const period = budget.period as BudgetPeriodKind;
-
-  let remaining: number;
-  let rolledOverAmount = 0;
-  let periodEnd: Date;
-  let spent: number;
-  let periods: PeriodActuals[] | undefined;
-
-  if (category.budgetType === "rollover_envelope") {
-    const fullChain = buildPeriodChain(period, now, MAX_ROLLOVER_LOOKBACK_PERIODS);
-    const chain = fullChain.filter((p) => p.start >= budget.effectiveFrom);
-    const usedChain = chain.length > 0 ? chain : [fullChain[fullChain.length - 1]];
-
-    const transactions = await prisma.transaction.findMany({
-      where: {
-        userId,
-        categoryId: category.id,
-        isTransfer: false,
-        date: { gte: usedChain[0].start, lt: usedChain[usedChain.length - 1].end },
-      },
-      select: { date: true, amount: true },
-    });
-
-    periods = usedChain.map((p) => ({
-      periodStart: p.start,
-      periodEnd: p.end,
-      spent: sumExpenseInRange(transactions, p.start, p.end),
-    }));
-
-    const result = computeRolloverEnvelopeBudget(
-      { amount: Number(budget.amount), rolloverCap: budget.rolloverCap ? Number(budget.rolloverCap) : null },
-      periods
-    );
-    remaining = result.remaining;
-    rolledOverAmount = result.rolledOverAmount;
-    periodEnd = result.periodEnd;
-    spent = result.spent;
-  } else {
-    const range = buildPeriodChain(period, now, 1)[0];
-    const transactions = await prisma.transaction.findMany({
-      where: { userId, categoryId: category.id, isTransfer: false, date: { gte: range.start, lt: range.end } },
-      select: { date: true, amount: true },
-    });
-    const result = computeMonthlyResetBudget(
-      { amount: Number(budget.amount) },
-      { periodStart: range.start, periodEnd: range.end, spent: sumExpenseInRange(transactions, range.start, range.end) }
-    );
-    remaining = result.remaining;
-    periodEnd = result.periodEnd;
-    spent = result.spent;
-  }
-
-  const safePerDay = computeSafeToSpendPerDay(remaining, periodEnd, now);
-  const available = Number(budget.amount) + rolledOverAmount;
-  const progressValue = available > 0 ? Math.min(100, (spent / available) * 100) : spent > 0 ? 100 : 0;
+  const { remaining, rolledOverAmount, safePerDay, progressValue, periods } = await computeRecurringBudgetProgress(
+    userId,
+    category,
+    budget,
+    now
+  );
   const showPeriodChart = category.budgetType === "rollover_envelope" && periods && periods.length > 1;
 
   return (
@@ -259,14 +202,4 @@ function SinkingFundCard({
       )}
     </Card>
   );
-}
-
-function sumExpenseInRange(
-  transactions: Array<{ date: Date; amount: unknown }>,
-  start: Date,
-  end: Date
-): number {
-  return transactions
-    .filter((t) => t.date >= start && t.date < end)
-    .reduce((sum, t) => sum - Number(t.amount), 0); // expenses are stored as negative amounts; spend is positive
 }

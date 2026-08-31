@@ -337,6 +337,7 @@ model Category {
   color            String?
   sortOrder        Int        @default(0) @map("sort_order")
   isArchived       Boolean    @default(false) @map("is_archived")
+  pinnedToDashboard Boolean   @default(false) @map("pinned_to_dashboard")
 
   user           AppUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
   parentCategory Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
