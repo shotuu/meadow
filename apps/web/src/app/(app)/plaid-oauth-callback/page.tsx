@@ -2,6 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { usePlaidLink } from "react-plaid-link";
 import { usePlaidLinkCompletion, PLAID_LINK_TOKEN_STORAGE_KEY } from "../accounts/use-plaid-link-completion";
 
@@ -33,7 +34,8 @@ export default function PlaidOAuthCallbackPage() {
     token: linkToken,
     receivedRedirectUri: typeof window === "undefined" ? undefined : window.location.href,
     onSuccess: onDone,
-    onExit: () => {
+    onExit: (error) => {
+      if (error) toast.error(`Bank connection didn't go through: ${error.display_message ?? error.error_message}`);
       window.localStorage.removeItem(PLAID_LINK_TOKEN_STORAGE_KEY);
       router.replace("/accounts");
     },
