@@ -41,6 +41,11 @@ interface AiSuggestion {
  * user's uncategorized transactions into one Gemini call (structured JSON output,
  * not free-text parsing) rather than one call per transaction — this is the free
  * tier, so minimizing request count matters.
+ *
+ * Shared between apps/worker (nightly cron, all users) and apps/web (the
+ * Accounts "Sync now" button, current user only, via runCategorizationBatchForUser
+ * directly) -- lives here rather than in either app since they can't import
+ * from each other, same reasoning as packages/plaid-sync and packages/ibkr-sync.
  */
 export async function runCategorizationBatchForAllUsers(): Promise<void> {
   const userIds = await prisma.appUser.findMany({ select: { id: true } });
@@ -48,12 +53,12 @@ export async function runCategorizationBatchForAllUsers(): Promise<void> {
     try {
       await runCategorizationBatchForUser(userId);
     } catch (err) {
-      console.error(`[worker] runCategorizationBatch: user ${userId} failed`, err);
+      console.error(`[categorization-ai] user ${userId} failed`, err);
     }
   }
 }
 
-async function runCategorizationBatchForUser(userId: string): Promise<void> {
+export async function runCategorizationBatchForUser(userId: string): Promise<void> {
   const [categories, transactions] = await Promise.all([
     prisma.category.findMany({
       where: { userId, isArchived: false },
@@ -95,7 +100,7 @@ async function runCategorizationBatchForUser(userId: string): Promise<void> {
 
   const text = response.text;
   if (!text) {
-    console.error(`[worker] runCategorizationBatch: empty response for user ${userId}`);
+    console.error(`[categorization-ai] empty response for user ${userId}`);
     return;
   }
 
@@ -103,7 +108,7 @@ async function runCategorizationBatchForUser(userId: string): Promise<void> {
   try {
     suggestions = JSON.parse(text);
   } catch {
-    console.error(`[worker] runCategorizationBatch: unparseable response for user ${userId}`);
+    console.error(`[categorization-ai] unparseable response for user ${userId}`);
     return;
   }
 

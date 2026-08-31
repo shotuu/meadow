@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.3",
+    "@finance-app/categorization-ai": "workspace:*",
     "@finance-app/db": "workspace:*",
     "@finance-app/finance-logic": "workspace:*",
     "@finance-app/ibkr-sync": "workspace:*",

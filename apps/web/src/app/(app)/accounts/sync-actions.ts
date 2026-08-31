@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@finance-app/db";
 import { syncPlaidItem } from "@finance-app/plaid-sync";
 import { syncIbkrFlexConfig } from "@finance-app/ibkr-sync";
+import { runCategorizationBatchForUser } from "@finance-app/categorization-ai";
 import { requireUserId } from "@/lib/session";
 
 export interface SyncNowResult {
@@ -13,11 +14,12 @@ export interface SyncNowResult {
 
 /**
  * Triggers an on-demand sync of every active Plaid item and IBKR config for
- * the current user -- the only other triggers are link time and the
- * worker's nightly cron, which can leave a stale balance/transaction list
- * for up to a day. One item/config failing (e.g. a revoked bank
- * connection) doesn't stop the rest, mirroring apps/worker/src/jobs/index.ts's
- * per-item try/catch pattern.
+ * the current user, then the AI categorization batch -- the only other
+ * triggers for any of this are link time and the worker's nightly cron,
+ * which can leave a stale balance/transaction list (and uncategorized
+ * transactions) for up to a day. One item/config failing (e.g. a revoked
+ * bank connection) doesn't stop the rest, mirroring
+ * apps/worker/src/jobs/index.ts's per-item try/catch pattern.
  */
 export async function syncAllAccounts(): Promise<SyncNowResult> {
   const userId = await requireUserId();
@@ -46,6 +48,16 @@ export async function syncAllAccounts(): Promise<SyncNowResult> {
     } catch (err) {
       errors.push(`IBKR: ${err instanceof Error ? err.message : "sync failed"}`);
     }
+  }
+
+  // This otherwise only ever runs on the worker's nightly cron -- freshly
+  // synced transactions (e.g. a bank connected mid-day) would sit
+  // uncategorized for up to a day with no way to see the AI pass actually
+  // work. A no-op if there's nothing uncategorized.
+  try {
+    await runCategorizationBatchForUser(userId);
+  } catch (err) {
+    errors.push(`Categorization: ${err instanceof Error ? err.message : "failed"}`);
   }
 
   revalidatePath("/accounts");
