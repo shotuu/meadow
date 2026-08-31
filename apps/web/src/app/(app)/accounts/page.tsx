@@ -22,6 +22,7 @@ import { summarizeByClassification } from "@/lib/balances";
 import { CompositionChart } from "@/components/composition-chart";
 import { EmptyState } from "@/components/empty-state";
 import { HoldingsSection } from "./holdings-section";
+import { SyncNowButton } from "./sync-now-button";
 
 const ACCOUNT_TYPE_ICON: Record<string, LucideIcon> = {
   checking: Wallet,
@@ -128,6 +129,7 @@ export default async function AccountsPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold">Accounts</h1>
         <div className="flex flex-wrap gap-2">
+          {accounts.some((a) => a.syncSource === "plaid" || a.syncSource === "ibkr_flex") && <SyncNowButton />}
           <ConnectPlaidButton />
           <ConnectIbkrDialog />
           <NewAccountDialog defaultCurrency={appUser.defaultCurrency} />
