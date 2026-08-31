@@ -34,6 +34,16 @@ export default async function DashboardPage() {
   const balanceByAccount = new Map<string, number>(
     accounts.map((a) => [a.id, a.transactions.reduce((sum, t) => sum + Number(t.amount), 0)])
   );
+
+  // Plaid-synced accounts have a real balance on file (refreshed via
+  // /accounts/balance/get on every sync) that's authoritative over the
+  // transaction sum -- see the identical comment in accounts/page.tsx.
+  for (const a of accounts) {
+    if (a.syncSource === "plaid" && a.currentBalance !== null) {
+      balanceByAccount.set(a.id, Number(a.currentBalance));
+    }
+  }
+
   const ibkrAccountIds = accounts.filter((a) => a.syncSource === "ibkr_flex").map((a) => a.id);
   if (ibkrAccountIds.length > 0) {
     const holdings = await prisma.investmentHolding.findMany({

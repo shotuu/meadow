@@ -54,6 +54,17 @@ export default async function AccountsPage() {
   });
   const balanceByAccount = new Map<string, unknown>(balances.map((b) => [b.accountId, b._sum.amount]));
 
+  // Plaid-synced accounts have a real balance on file (refreshed via
+  // /accounts/balance/get on every sync — see refreshPlaidAccountBalances)
+  // that's authoritative over the transaction sum, which can drift from
+  // the institution's actual balance (pending transactions, fees that
+  // never show up as a discrete line item, sync gaps).
+  for (const a of accounts) {
+    if (a.syncSource === "plaid" && a.currentBalance !== null) {
+      balanceByAccount.set(a.id, a.currentBalance);
+    }
+  }
+
   // IBKR-synced accounts have no Transaction rows at all — their balance
   // comes from InvestmentHolding market values instead (latest asOfDate
   // per symbol), not the transaction sum every other sync source uses.

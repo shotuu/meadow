@@ -54,10 +54,34 @@ export async function upsertPlaidAccounts(
         institutionName,
         syncSource: "plaid",
         externalAccountId: account.account_id,
+        ...(account.balances.current != null && {
+          currentBalance: account.balances.current,
+          balanceAsOf: new Date(),
+        }),
       },
     });
     accountIdByPlaidId.set(account.account_id, created.id);
   }
 
   return accountIdByPlaidId;
+}
+
+/**
+ * Refreshes the stored balance for already-linked Plaid accounts. Deliberately
+ * separate from upsertPlaidAccounts (which only ever creates missing accounts)
+ * and fed by /accounts/balance/get specifically rather than whatever accounts
+ * array transactionsSync/accountsGet happened to return -- Plaid's own docs
+ * note that balance data from those other endpoints "may be cached", while
+ * /accounts/balance/get is the one call documented to force a real-time,
+ * non-cached refresh from the institution.
+ */
+export async function refreshPlaidAccountBalances(userId: string, plaidAccounts: AccountBase[]): Promise<void> {
+  const now = new Date();
+  for (const account of plaidAccounts) {
+    if (account.balances.current == null) continue;
+    await prisma.financialAccount.updateMany({
+      where: { userId, syncSource: "plaid", externalAccountId: account.account_id },
+      data: { currentBalance: account.balances.current, balanceAsOf: now },
+    });
+  }
 }

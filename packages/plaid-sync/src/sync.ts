@@ -1,6 +1,6 @@
 import { prisma } from "@finance-app/db";
 import { getPlaidClient, callPlaid } from "./client";
-import { upsertPlaidAccounts } from "./accounts";
+import { upsertPlaidAccounts, refreshPlaidAccountBalances } from "./accounts";
 import { applyCategorizationRules } from "./categorize";
 import { decryptSecret } from "@finance-app/crypto";
 
@@ -102,6 +102,12 @@ export async function syncPlaidItem(plaidItemId: string): Promise<SyncResult> {
     cursor = data.next_cursor;
     hasMore = data.has_more;
   }
+
+  // A dedicated, real-time balance refresh -- deliberately not reusing the
+  // (possibly cached, per Plaid's own docs) account balances already seen
+  // in the transactionsSync pages above.
+  const balanceResponse = await callPlaid(() => client.accountsBalanceGet({ access_token: accessToken }));
+  await refreshPlaidAccountBalances(item.userId, balanceResponse.data.accounts);
 
   await prisma.plaidItem.update({
     where: { id: item.id },

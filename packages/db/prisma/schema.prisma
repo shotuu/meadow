@@ -176,6 +176,12 @@ model FinancialAccount {
   syncSource         SyncSource             @map("sync_source")
   externalAccountId  String?                @map("external_account_id")
   isArchived         Boolean                @default(false) @map("is_archived")
+  // Plaid-reported real balance (from /accounts/balance/get, a real-time,
+  // non-cached call), refreshed on every sync. Null for non-Plaid accounts
+  // -- those keep using the transaction-sum balance, there's no external
+  // source of truth to prefer for them.
+  currentBalance     Decimal?               @map("current_balance") @db.Decimal(18, 4)
+  balanceAsOf        DateTime?              @map("balance_as_of")
 
   user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
