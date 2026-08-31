@@ -1,5 +1,5 @@
 import { prisma } from "@finance-app/db";
-import { getPlaidClient } from "./client";
+import { getPlaidClient, callPlaid } from "./client";
 import { decryptSecret } from "@finance-app/crypto";
 
 /**
@@ -15,7 +15,7 @@ export async function removeAllPlaidItems(userId: string): Promise<void> {
 
   for (const item of items) {
     try {
-      await client.itemRemove({ access_token: decryptSecret(item.accessToken) });
+      await callPlaid(() => client.itemRemove({ access_token: decryptSecret(item.accessToken) }));
     } catch (err) {
       // Still remove our record even if Plaid's side fails (e.g. already
       // revoked) — an orphaned local row is worse than a redundant call.

@@ -1,6 +1,6 @@
 import { prisma } from "@finance-app/db";
 import { CountryCode, Products } from "plaid";
-import { getPlaidClient } from "./client";
+import { getPlaidClient, callPlaid } from "./client";
 import { upsertPlaidAccounts } from "./accounts";
 import { syncPlaidItem } from "./sync";
 import { encryptSecret } from "@finance-app/crypto";
@@ -16,14 +16,16 @@ import { encryptSecret } from "@finance-app/crypto";
  */
 export async function createPlaidLinkToken(userId: string, redirectUri?: string): Promise<string> {
   const client = getPlaidClient();
-  const response = await client.linkTokenCreate({
-    client_name: "Meadow",
-    language: "en",
-    country_codes: [CountryCode.Us],
-    user: { client_user_id: userId },
-    products: [Products.Transactions],
-    ...(redirectUri && { redirect_uri: redirectUri }),
-  });
+  const response = await callPlaid(() =>
+    client.linkTokenCreate({
+      client_name: "Meadow",
+      language: "en",
+      country_codes: [CountryCode.Us],
+      user: { client_user_id: userId },
+      products: [Products.Transactions],
+      ...(redirectUri && { redirect_uri: redirectUri }),
+    })
+  );
   return response.data.link_token;
 }
 
@@ -40,14 +42,14 @@ export async function linkPlaidItem(
 ): Promise<{ plaidItemId: string; sync: Awaited<ReturnType<typeof syncPlaidItem>> }> {
   const client = getPlaidClient();
 
-  const exchangeResponse = await client.itemPublicTokenExchange({ public_token: publicToken });
+  const exchangeResponse = await callPlaid(() => client.itemPublicTokenExchange({ public_token: publicToken }));
   const { access_token: accessToken, item_id: plaidItemId } = exchangeResponse.data;
 
   const item = await prisma.plaidItem.create({
     data: { userId, plaidItemId, accessToken: encryptSecret(accessToken), institutionName },
   });
 
-  const accountsResponse = await client.accountsGet({ access_token: accessToken });
+  const accountsResponse = await callPlaid(() => client.accountsGet({ access_token: accessToken }));
   await upsertPlaidAccounts(userId, accountsResponse.data.accounts, institutionName);
 
   const sync = await syncPlaidItem(item.id);
