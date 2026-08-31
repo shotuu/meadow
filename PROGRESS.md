@@ -840,6 +840,44 @@ Link integration guide:
   running process — it picked up the new production credentials via
   restart, confirmed via a clean boot log).
 
+**Security incident: Plaid production secret leaked to logs, fixed same day
+(2026-08-31):** while debugging the very first real production Link
+attempt (the Data Transparency Messaging config error above), found that
+the underlying Plaid SDK error thrown by `linkTokenCreate` had escaped
+uncaught up through the server action to Next.js's default
+uncaught-server-action-error logging — and that error object carries the
+*entire* HTTP request on `.config`, headers included, which means the
+`PLAID-SECRET` header itself. Node's `console.error` deep-serializes an
+Error's own properties, so the secret ended up in Railway's log history in
+plaintext, across many repeated lines (the same failed attempt got retried
+and re-logged enough times to hit Railway's 500 logs/sec rate limit).
+Flagged to the user immediately per this project's own incident-response
+convention rather than silently patched. **The user rotated the Plaid
+production secret and updated it directly in the Railway dashboard and
+local `.env` themselves** — the old exposed value should be treated as
+permanently burned regardless of log retention specifics.
+
+Root-caused and fixed properly, not just for this one call site: added
+`callPlaid()` in `packages/plaid-sync/src/client.ts`, a wrapper every one
+of the package's 5 Plaid API calls (`linkTokenCreate`,
+`itemPublicTokenExchange`, `accountsGet`, `transactionsSync`, `itemRemove`)
+now goes through, that catches any error and re-throws a clean
+`PlaidRequestError` carrying only the safe fields Plaid's own JSON error
+body provides (`error_code`, message, `request_id`) — never the raw
+request/response. `unlink.ts`'s existing `console.error(..., err)` on
+`itemRemove` failure had the identical latent exposure risk (just never
+triggered yet); fixed as part of the same pass, not left for a future
+incident. Verified: full check suite clean, a real worker boot (imports
+the same package), deployed to both `web` and `worker`.
+
+Separately, corrected a related local-dev config issue: after rotating
+the secret, `PLAID_ENV` in local `.env` was still `"sandbox"` while the
+just-rotated *production* secret had been pasted in alongside it — sandbox
+and production are separate credential pairs at Plaid, so that combination
+would reject every request. Local dev should never hold a production
+secret at all (no legitimate reason to — production Plaid calls only ever
+originate from Railway); corrected back to sandbox credentials.
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)

@@ -105,6 +105,15 @@ rotate the affected secret (Google OAuth client secret, Plaid secret, or
 compromised — revoke them via Plaid's dashboard directly rather than
 relying on the app's own deletion flow.
 
+**Exercised for real, 2026-08-31**: the Plaid production secret was found
+in Railway's application logs in plaintext (an uncaught Plaid SDK error
+carries its full HTTP request, headers included, on `.config`; Node's
+default error logging serializes that whole). Rotated immediately in the
+Plaid Dashboard and updated in both Railway and local `.env` — see
+PROGRESS.md's writeup for the full incident and the code fix
+(`packages/plaid-sync/src/client.ts`'s `callPlaid()`) that stops any Plaid
+error from carrying secrets past this package's boundary going forward.
+
 ## Review
 
 This document is updated when the system it describes changes, not on a
