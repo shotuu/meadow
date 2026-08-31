@@ -1,11 +1,11 @@
-import { TrendingUp, TrendingDown, ArrowLeftRight, type LucideIcon } from "lucide-react";
+import { TrendingUp, TrendingDown, ArrowLeftRight, Pin, PinOff, type LucideIcon } from "lucide-react";
 import { prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { NewCategoryDialog } from "./new-category-dialog";
-import { archiveCategory } from "./actions";
+import { archiveCategory, toggleDashboardPin } from "./actions";
 
 const BUDGET_TYPE_LABEL: Record<string, string> = {
   none: "No budget",
@@ -66,6 +66,23 @@ export default async function CategoriesPage() {
                     </span>
                     <div className="flex items-center gap-3">
                       <Badge variant="outline">{BUDGET_TYPE_LABEL[category.budgetType]}</Badge>
+                      {category.budgetType !== "none" && (
+                        <form action={toggleDashboardPin.bind(null, category.id)}>
+                          <Button
+                            type="submit"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={category.pinnedToDashboard ? "Unpin from dashboard" : "Pin to dashboard"}
+                            title={category.pinnedToDashboard ? "Unpin from dashboard" : "Pin to dashboard"}
+                          >
+                            {category.pinnedToDashboard ? (
+                              <Pin className="size-4 fill-current text-primary" />
+                            ) : (
+                              <PinOff className="size-4 text-muted-foreground" />
+                            )}
+                          </Button>
+                        </form>
+                      )}
                       <form action={archiveCategory.bind(null, category.id)}>
                         <Button type="submit" variant="ghost" size="sm">
                           Archive

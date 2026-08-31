@@ -1,19 +1,22 @@
 import Link from "next/link";
-import { Landmark, Receipt } from "lucide-react";
-import { prisma } from "@finance-app/db";
+import { Landmark, Receipt, Pin } from "lucide-react";
+import { prisma, type Prisma } from "@finance-app/db";
 import { convertCurrency, type UsdRateMap } from "@finance-app/finance-logic";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import { summarizeByClassification } from "@/lib/balances";
+import { computeRecurringBudgetProgress } from "@/lib/budget-progress";
 import { CompositionChart } from "@/components/composition-chart";
 import { EmptyState } from "@/components/empty-state";
 
 export default async function DashboardPage() {
   const userId = await requireUserId();
+  const now = new Date();
 
-  const [appUser, accounts, recentTransactions] = await Promise.all([
+  const [appUser, accounts, recentTransactions, pinnedCategories] = await Promise.all([
     prisma.appUser.findUniqueOrThrow({ where: { id: userId } }),
     prisma.financialAccount.findMany({
       where: { userId, isArchived: false },
@@ -24,6 +27,14 @@ export default async function DashboardPage() {
       orderBy: { date: "desc" },
       take: 8,
       include: { account: { select: { name: true } } },
+    }),
+    prisma.category.findMany({
+      where: { userId, isArchived: false, pinnedToDashboard: true },
+      include: {
+        budgets: { where: { effectiveTo: null }, take: 1 },
+        sinkingFunds: true,
+      },
+      orderBy: { name: "asc" },
     }),
   ]);
 
@@ -154,6 +165,25 @@ export default async function DashboardPage() {
         </div>
       )}
 
+      {pinnedCategories.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground uppercase tracking-wide">
+              <Pin className="size-3.5" />
+              Pinned budgets
+            </h2>
+            <Link href="/budgets" className="text-sm text-primary hover:underline">
+              View all
+            </Link>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {pinnedCategories.map((category) => (
+              <PinnedBudgetCard key={category.id} category={category} userId={userId} now={now} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
@@ -192,5 +222,52 @@ export default async function DashboardPage() {
         )}
       </div>
     </div>
+  );
+}
+
+type PinnedCategory = Prisma.CategoryGetPayload<{ include: { budgets: true; sinkingFunds: true } }>;
+
+// Mirrors budgets/page.tsx's two card types but condensed to a single small
+// progress bar each -- this is meant to be a glanceable summary, not a
+// replacement for the full Budgets page (which every card links back to
+// via the section's "View all").
+async function PinnedBudgetCard({ category, userId, now }: { category: PinnedCategory; userId: string; now: Date }) {
+  if (category.budgetType === "sinking_fund") {
+    const fund = category.sinkingFunds[0];
+    if (!fund) return null;
+    const target = Number(fund.targetAmount);
+    const current = Number(fund.currentBalance);
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{category.name}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Progress value={target > 0 ? Math.min(100, (current / target) * 100) : 0} indicatorClassName="bg-positive" />
+          <p className="font-amount text-sm text-muted-foreground">
+            {formatMoney(current, fund.currency)} / {formatMoney(target, fund.currency)} saved
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const budget = category.budgets[0];
+  if (!budget) return null;
+
+  const { remaining, progressValue } = await computeRecurringBudgetProgress(userId, category, budget, now);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">{category.name}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <Progress value={progressValue} indicatorClassName={remaining < 0 ? "bg-negative" : "bg-positive"} />
+        <p className={cn("font-amount text-sm font-medium", remaining < 0 ? "text-negative" : "text-positive")}>
+          {formatMoney(remaining, budget.currency)} remaining
+        </p>
+      </CardContent>
+    </Card>
   );
 }

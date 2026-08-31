@@ -30,3 +30,17 @@ export async function archiveCategory(categoryId: string) {
 
   revalidatePath("/categories");
 }
+
+export async function toggleDashboardPin(categoryId: string) {
+  const userId = await requireUserId();
+
+  const category = await prisma.category.findFirstOrThrow({ where: { id: categoryId, userId } });
+
+  await prisma.category.update({
+    where: { id: categoryId },
+    data: { pinnedToDashboard: !category.pinnedToDashboard },
+  });
+
+  revalidatePath("/categories");
+  revalidatePath("/dashboard");
+}
