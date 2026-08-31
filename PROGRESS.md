@@ -878,6 +878,52 @@ would reject every request. Local dev should never hold a production
 secret at all (no legitimate reason to — production Plaid calls only ever
 originate from Railway); corrected back to sandbox credentials.
 
+**Two real bugs from actual production use, plus a coverage question
+(2026-08-31):** the user connected a real Bank of America account and
+started using the app for real, which surfaced problems no amount of
+synthetic-data testing had caught:
+- **Account card layout broken across 5 pages** — the balance/badge
+  showed centered and stacked below the title instead of right-aligned
+  beside it. Root cause: `CardHeader`'s base classes set `display:grid`
+  (a single auto-sized implicit column, since no `grid-template-columns`
+  is set unless a `card-action` data-slot is present); every override site
+  added `flex-row items-center justify-between space-y-0` but never `flex`
+  itself, and `flex-row` alone (just `flex-direction`) does nothing
+  without `display:flex` — confirmed via computed styles and bounding
+  rects on the live page, not guessed from the screenshot. Same exact
+  broken string existed in 7 places across `accounts`, `alerts`, `budgets`
+  (×3), `recurring`, and the shared `skeletons.tsx` — fixed all of them.
+- **Plaid account balances were never actually accurate** — this app had
+  never once used Plaid's own balance data. `upsertPlaidAccounts` fetched
+  `account.balances` but discarded everything except the currency code;
+  every displayed Plaid balance was purely a sum of synced `Transaction`
+  rows, which drifts from the real balance (pending transactions, fees
+  that never post as a discrete line item, sync gaps). New
+  `currentBalance`/`balanceAsOf` columns on `FinancialAccount` (nullable,
+  additive migration), refreshed on every sync via a dedicated
+  `/accounts/balance/get` call in `syncPlaidItem` — deliberately not
+  reusing the accounts array already visible in `transactionsSync`'s
+  response, since Plaid's own docs note that balance data from other
+  endpoints "may be cached" while `/accounts/balance/get` is the one call
+  documented to force a real-time refresh. `accounts/page.tsx` and
+  `dashboard/page.tsx` both now prefer this stored balance over the
+  transaction sum for Plaid accounts, mirroring the exact override pattern
+  already used for IBKR accounts. Takes effect for the real BoA account at
+  the next sync — no manual "sync now" trigger exists in this app, only
+  link-time and the nightly worker cron.
+- **OCBC/DBS (Singapore) via Plaid: confirmed not possible**, checked
+  against the actual installed Plaid SDK's `CountryCode` enum rather than
+  assumed — only US/Canada/Europe are supported, no Singapore at all.
+  Pointed the user at this app's existing CSV import feature instead,
+  which is exactly what it's for (see the "Locked-in decisions" note
+  below about CSV import being permanent first-class support for
+  non-Plaid banks).
+- Verified: full check suite clean, a real worker boot for both fixes
+  (worker uses `packages/plaid-sync` and calls `syncPlaidItem` via its
+  nightly cron job), deployed to both `web` and `worker`, confirmed live
+  against the real production account — the card layout fix visually
+  confirmed correct, console clean.
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)
