@@ -5,7 +5,16 @@ import { upsertPlaidAccounts } from "./accounts";
 import { syncPlaidItem } from "./sync";
 import { encryptSecret } from "@finance-app/crypto";
 
-export async function createPlaidLinkToken(userId: string): Promise<string> {
+/**
+ * `redirectUri` is required for OAuth institutions (many large US banks --
+ * Chase, BofA, etc.) which redirect the browser away to the bank's own
+ * OAuth page and back; non-OAuth institutions ignore it. Must be the bare
+ * path with no query string, and must exactly match an entry in the Plaid
+ * Dashboard's Allowed redirect URIs list or linkTokenCreate itself rejects
+ * it -- see apps/web/src/app/(app)/plaid-oauth-callback/page.tsx, the page
+ * that receives this redirect and resumes Link.
+ */
+export async function createPlaidLinkToken(userId: string, redirectUri?: string): Promise<string> {
   const client = getPlaidClient();
   const response = await client.linkTokenCreate({
     client_name: "Meadow",
@@ -13,6 +22,7 @@ export async function createPlaidLinkToken(userId: string): Promise<string> {
     country_codes: [CountryCode.Us],
     user: { client_user_id: userId },
     products: [Products.Transactions],
+    ...(redirectUri && { redirect_uri: redirectUri }),
   });
   return response.data.link_token;
 }
