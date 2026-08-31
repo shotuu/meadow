@@ -7,8 +7,8 @@
 import { prisma } from "@finance-app/db";
 import { syncPlaidItem } from "@finance-app/plaid-sync";
 import { syncIbkrFlexConfig } from "@finance-app/ibkr-sync";
+import { runCategorizationBatchForAllUsers } from "@finance-app/categorization-ai";
 import { recomputeRecurringSeriesForAllUsers } from "./recurring.js";
-import { runCategorizationBatchForAllUsers } from "./categorize.js";
 import { refreshExchangeRates as refreshExchangeRatesImpl } from "./exchange-rates.js";
 import { evaluateAlertRulesForAllUsers } from "./alerts.js";
 

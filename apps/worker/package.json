@@ -13,7 +13,7 @@
     "@finance-app/finance-logic": "workspace:*",
     "@finance-app/plaid-sync": "workspace:*",
     "@finance-app/ibkr-sync": "workspace:*",
-    "@google/genai": "^2.19.0",
+    "@finance-app/categorization-ai": "workspace:*",
     "node-cron": "^4.6.0"
   },
   "devDependencies": {
