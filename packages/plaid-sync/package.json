@@ -9,7 +9,7 @@
     "@finance-app/crypto": "workspace:*",
     "@finance-app/db": "workspace:*",
     "@finance-app/finance-logic": "workspace:*",
-    "plaid": "^38.0.0"
+    "plaid": "^46.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
