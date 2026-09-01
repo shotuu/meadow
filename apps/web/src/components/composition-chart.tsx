@@ -32,7 +32,7 @@ export function CompositionChart({
   const data = [{ name: currency, assets: assetsAbs, liabilities: liabilitiesAbs }];
 
   return (
-    <ChartContainer config={chartConfig} className="aspect-auto h-20 w-full">
+    <ChartContainer config={chartConfig} className="aspect-auto h-16 w-full">
       <BarChart data={data} layout="vertical" barCategoryGap={0} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
         <XAxis type="number" hide />
         <YAxis type="category" dataKey="name" hide />

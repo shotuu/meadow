@@ -96,10 +96,32 @@ export async function setTransactionCategory(transactionId: string, categoryId: 
 
   await prisma.transaction.update({
     where: { id: transaction.id },
-    data: { categoryId, categorySource: "manual" },
+    data: { categoryId, categorySource: "manual", categoryConfidence: null },
   });
 
   await recordCategoryCorrection(userId, transaction.merchantName, categoryId);
+
+  revalidatePath("/transactions");
+}
+
+// Radix's Select doesn't fire onValueChange when the already-selected value
+// is re-picked, so there's otherwise no way to accept an AI suggestion as
+// correct -- this is a manual set to the category it already has, which
+// reuses the same learning path as an actual correction.
+export async function confirmTransactionCategory(transactionId: string) {
+  const userId = await requireUserId();
+
+  const transaction = await prisma.transaction.findFirstOrThrow({
+    where: { id: transactionId, userId },
+  });
+  if (!transaction.categoryId) throw new Error("Transaction has no category to confirm");
+
+  await prisma.transaction.update({
+    where: { id: transaction.id },
+    data: { categorySource: "manual", categoryConfidence: null },
+  });
+
+  await recordCategoryCorrection(userId, transaction.merchantName, transaction.categoryId);
 
   revalidatePath("/transactions");
 }

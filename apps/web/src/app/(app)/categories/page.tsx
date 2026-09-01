@@ -4,6 +4,7 @@ import { requireUserId } from "@/lib/session";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { categoryColorVar } from "@/lib/category-color";
 import { NewCategoryDialog } from "./new-category-dialog";
 import { archiveCategory, toggleDashboardPin } from "./actions";
 
@@ -19,12 +20,6 @@ const KIND_ICON: Record<string, LucideIcon> = {
   expense: TrendingDown,
   transfer: ArrowLeftRight,
 };
-
-function categoryColorVar(categoryId: string): string {
-  let hash = 0;
-  for (let i = 0; i < categoryId.length; i++) hash = (hash * 31 + categoryId.charCodeAt(i)) >>> 0;
-  return `var(--chart-${(hash % 5) + 1})`;
-}
 
 export default async function CategoriesPage() {
   const userId = await requireUserId();

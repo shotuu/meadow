@@ -1,14 +1,5 @@
-import {
-  Wallet,
-  PiggyBank,
-  CreditCard,
-  TrendingUp,
-  Banknote,
-  HandCoins,
-  CircleDollarSign,
-  type LucideIcon,
-} from "lucide-react";
-import { prisma } from "@finance-app/db";
+import { Wallet, CircleDollarSign } from "lucide-react";
+import { prisma, type AccountType } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,20 +10,11 @@ import { ConnectIbkrDialog } from "./connect-ibkr-dialog";
 import { archiveAccount } from "./actions";
 import { formatMoney } from "@/lib/format";
 import { summarizeByClassification } from "@/lib/balances";
+import { ACCOUNT_TYPE_ICON } from "@/lib/account-types";
 import { CompositionChart } from "@/components/composition-chart";
 import { EmptyState } from "@/components/empty-state";
 import { HoldingsSection } from "./holdings-section";
 import { SyncNowButton } from "./sync-now-button";
-
-const ACCOUNT_TYPE_ICON: Record<string, LucideIcon> = {
-  checking: Wallet,
-  savings: PiggyBank,
-  credit_card: CreditCard,
-  brokerage: TrendingUp,
-  cash: Banknote,
-  loan: HandCoins,
-  other: CircleDollarSign,
-};
 
 export default async function AccountsPage() {
   const userId = await requireUserId();
@@ -189,7 +171,7 @@ function AccountGroup({
   accounts: Array<{
     id: string;
     name: string;
-    type: string;
+    type: AccountType;
     currency: string;
     institutionName: string | null;
     syncSource: string;
