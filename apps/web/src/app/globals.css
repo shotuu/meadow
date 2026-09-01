@@ -145,5 +145,6 @@
 @layer utilities {
   .font-amount {
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 }

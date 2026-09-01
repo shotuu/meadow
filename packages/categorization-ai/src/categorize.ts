@@ -3,6 +3,12 @@ import { prisma } from "@finance-app/db";
 
 const MODEL = "gemini-flash-lite-latest";
 const BATCH_SIZE = 50;
+const LEARNED_EXAMPLE_LIMIT = 20;
+
+// A suggestion at or above this confidence is applied without flagging it
+// for human review; below it, the UI surfaces the transaction on the
+// Needs Review tab even though a category was still assigned.
+export const LOW_CONFIDENCE_THRESHOLD = 0.7;
 
 let client: GoogleGenAI | undefined;
 function getClient(): GoogleGenAI {
@@ -59,7 +65,7 @@ export async function runCategorizationBatchForAllUsers(): Promise<void> {
 }
 
 export async function runCategorizationBatchForUser(userId: string): Promise<void> {
-  const [categories, transactions] = await Promise.all([
+  const [categories, transactions, learnedExamples] = await Promise.all([
     prisma.category.findMany({
       where: { userId, isArchived: false },
       select: { id: true, name: true, kind: true },
@@ -68,6 +74,17 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
       where: { userId, categorySource: "uncategorized", isTransfer: false },
       select: { id: true, description: true, merchantName: true, amount: true },
       take: BATCH_SIZE,
+      orderBy: { date: "desc" },
+    }),
+    // Past manual confirmations/corrections, given to the model as
+    // precedent -- the exact-merchant rule engine (recordCategoryCorrection)
+    // already short-circuits repeat merchants before this ever runs, so
+    // these examples exist to help Gemini generalize to a *similar* but
+    // not identical merchant/description, which the rule engine can't do.
+    prisma.transaction.findMany({
+      where: { userId, categorySource: "manual", categoryId: { not: null } },
+      select: { description: true, merchantName: true, amount: true, categoryId: true },
+      take: LEARNED_EXAMPLE_LIMIT,
       orderBy: { date: "desc" },
     }),
   ]);
@@ -79,6 +96,12 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
     model: MODEL,
     contents: JSON.stringify({
       categories: categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
+      learnedExamples: learnedExamples.map((t) => ({
+        description: t.description,
+        merchant: t.merchantName,
+        amount: Number(t.amount),
+        categoryId: t.categoryId,
+      })),
       transactions: transactions.map((t) => ({
         id: t.id,
         description: t.description,
@@ -92,7 +115,10 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
         "best-fitting category id from the provided list based on its description/merchant. " +
         "Negative amounts are money leaving the account (expenses); positive are income. Only " +
         "use category ids from the provided list, or the literal string \"none\" if nothing " +
-        "fits well. Return one entry per transaction, in the same order given.",
+        "fits well. The learnedExamples array shows transactions this user has manually " +
+        "confirmed or corrected before -- use them as precedent for categorizing similar " +
+        "(not necessarily identical) merchants or descriptions. Return one entry per " +
+        "transaction in the transactions array, in the same order given.",
       responseMimeType: "application/json",
       responseSchema: RESPONSE_SCHEMA,
     },

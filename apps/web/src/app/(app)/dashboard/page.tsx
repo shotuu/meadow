@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Landmark, Receipt, Pin } from "lucide-react";
 import { prisma, type Prisma } from "@finance-app/db";
-import { convertCurrency, type UsdRateMap } from "@finance-app/finance-logic";
+import { convertCurrency, summarizeSpendByCategory, type UsdRateMap } from "@finance-app/finance-logic";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -9,7 +9,10 @@ import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import { summarizeByClassification } from "@/lib/balances";
 import { computeRecurringBudgetProgress } from "@/lib/budget-progress";
+import { ACCOUNT_TYPE_LABEL } from "@/lib/account-types";
 import { CompositionChart } from "@/components/composition-chart";
+import { AssetMixChart } from "./asset-mix-chart";
+import { AccountList, type AccountListRow } from "./account-list";
 import { EmptyState } from "@/components/empty-state";
 
 export default async function DashboardPage() {
@@ -79,6 +82,20 @@ export default async function DashboardPage() {
     }))
   );
 
+  const accountRowsByCurrency = new Map<string, AccountListRow[]>();
+  for (const account of accounts) {
+    const row: AccountListRow = {
+      id: account.id,
+      name: account.name,
+      type: account.type,
+      classification: account.classification,
+      balance: balanceByAccount.get(account.id) ?? 0,
+    };
+    const rows = accountRowsByCurrency.get(account.currency) ?? [];
+    rows.push(row);
+    accountRowsByCurrency.set(account.currency, rows);
+  }
+
   const defaultCurrency = appUser.defaultCurrency;
   const latestRateDate = await prisma.exchangeRate.aggregate({
     where: { baseCurrency: "USD" },
@@ -139,28 +156,58 @@ export default async function DashboardPage() {
           )}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            {[...byCurrency.entries()].map(([currency, totals]) => (
-              <Card key={currency}>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Landmark className="size-4 text-muted-foreground" />
-                    Net worth ({currency})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="space-y-1">
-                    <p className="font-amount text-2xl font-semibold">
-                      {formatMoney(totals.assets + totals.liabilities, currency)}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {formatMoney(totals.assets, currency)} assets ·{" "}
-                      {formatMoney(totals.liabilities, currency)} liabilities
-                    </p>
-                  </div>
-                  <CompositionChart assets={totals.assets} liabilities={totals.liabilities} currency={currency} />
-                </CardContent>
-              </Card>
-            ))}
+            {[...byCurrency.entries()].map(([currency, totals]) => {
+              const rows = accountRowsByCurrency.get(currency) ?? [];
+              const assetBuckets = summarizeSpendByCategory(
+                rows
+                  .filter((r) => r.classification === "asset")
+                  .map((r) => ({ categoryId: r.type, categoryName: ACCOUNT_TYPE_LABEL[r.type], amount: r.balance })),
+                5
+              );
+              return (
+                <Card key={currency}>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Landmark className="size-4 text-muted-foreground" />
+                      Net worth ({currency})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-1">
+                      <p className="font-amount text-2xl font-semibold">
+                        {formatMoney(totals.assets + totals.liabilities, currency)}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {formatMoney(totals.assets, currency)} assets ·{" "}
+                        {formatMoney(totals.liabilities, currency)} liabilities
+                      </p>
+                    </div>
+                    <CompositionChart assets={totals.assets} liabilities={totals.liabilities} currency={currency} />
+                    {assetBuckets.length > 0 && (
+                      <div className="border-t pt-3">
+                        <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                          Asset mix
+                        </p>
+                        <AssetMixChart data={assetBuckets} currency={currency} />
+                      </div>
+                    )}
+                    {rows.length > 0 && (
+                      <div className="border-t pt-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            Accounts
+                          </p>
+                          <Link href="/accounts" className="text-xs text-primary hover:underline">
+                            View all
+                          </Link>
+                        </div>
+                        <AccountList accounts={rows} currency={currency} />
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </div>
       )}
