@@ -1076,6 +1076,74 @@ were "just one bar," and a real human-review loop for AI categorization.
   built and verified locally only; deploying (`web`, no worker/schema
   changes) is a separate step pending user go-ahead.
 
+**Backlog cleanup — tests, unarchive, pagination, CSV templates, subscriptions
+rollup, Tremor removal (2026-09-01):** the user asked "what else is there to
+do," got an 8-item gap list pulled from this file's own tracking, and said
+to do all of them. Two were scoped down with the user's explicit sign-off
+before touching anything: `portfolio_drift` alerts (would mean designing a
+brand-new target-allocation settings UI from scratch, nothing reads/writes
+`TargetAllocation`/`HoldingBucketAssignment` anywhere — skipped, not
+built) and auto-deploy-on-merge (touches CI/CD, needs a Railway token as a
+GitHub secret — skipped, deploys stay manual). What shipped:
+- **Real test coverage, for the first time outside `finance-logic`**:
+  added vitest (zero-config, mirroring `finance-logic`'s existing setup) to
+  `apps/web` and `apps/worker` — `pnpm test`'s root `pnpm -r test` picked
+  both up automatically, no CI changes needed. Scoped to pure-function
+  tests only (no test-database/mocking infra exists in this repo, and the
+  user chose not to add any yet): extracted `externalIdFor` (CSV dedup
+  hashing) to `apps/web/src/lib/csv-dedup.ts` and the categorization
+  rule-matching logic to `apps/web/src/lib/categorization-rules.ts` (both
+  previously inlined in files that couldn't be tested in place — one is
+  `"use server"`, the other just had zero coverage), exported the worker's
+  already-pure `median`/`mostCommon` helpers, and added a new
+  `computeMonthlyEquivalent` to `packages/finance-logic/src/recurring.ts`.
+  68 tests total across 3 workspaces now.
+- **Unarchive, for both categories and accounts**: both `archiveCategory`
+  and `archiveAccount` were one-way — no UI ever showed an archived row,
+  no unarchive action existed. New `unarchiveCategory`/`unarchiveAccount`
+  actions plus an "Archived" section (only rendered when non-empty) on
+  each page.
+- **Transactions pagination**: the list was `take: 100` with no
+  `skip`/cursor, and the "All (N)" tab count was just `transactions.length`
+  — already wrong past 100 rows. Now `PAGE_SIZE = 50`, a real
+  `prisma.transaction.count()` for the total, and a new
+  `?page=` control (`pagination.tsx`, mirroring `category-filter.tsx`'s
+  `useRouter`/`usePathname` pattern). Needs Review stays unpaginated
+  (`take: 200`) — it's a working queue, not a browse list.
+- **CSV import templates**: `CsvImportTemplate` existed in the schema and
+  DB since the very first migration but nothing anywhere had ever read or
+  written it — fully dead infrastructure. Its `columnMapping: Json` /
+  `dateFormat` / `amountSignConvention` shape doesn't match the dialog's
+  discrete fields, so added a serialization layer
+  (`apps/web/src/lib/csv-template.ts`, `dateFormat` stored as a constant
+  `"auto"` since this app parses dates with plain `new Date(...)`, not a
+  configurable format). `import-csv-dialog.tsx` converted from
+  `defaultValue`-uncontrolled selects to controlled state so picking a
+  saved template can programmatically fill the four column pickers +
+  flip-sign checkbox (only pre-filling a column whose saved name still
+  exists in the newly uploaded file's headers). Save-as-template is
+  sequenced after a successful import and never rolls it back on failure.
+- **Subscriptions monthly-total rollup on `/recurring`**: no new query —
+  the page already fetched every `RecurringSeries` scalar in one
+  `findMany`. New summary card sums `computeMonthlyEquivalent` (weekly/
+  biweekly/quarterly/annual normalized to a monthly figure; `irregular`
+  series excluded, can't be normalized) through the existing
+  `convertCurrency`/`ExchangeRate` pattern already used on
+  dashboard/transactions.
+- **Removed the unused `@tremor/react` dependency** (confirmed zero
+  imports anywhere in `apps/web/src`, flagged as safe cleanup in this
+  file since the 2026-08-29 visual-polish pass) — `pnpm install` pruned
+  it and its transitive deps from the lockfile.
+- Verified: `tsc --noEmit`, `eslint`, `vitest` (68/68 across finance-logic/
+  web/worker), `next build`, and a real `pnpm exec tsx src/index.ts` worker
+  boot all clean. Full browser click-through against real Postgres with
+  throwaway seed data (archived/unarchived a category and an account, 62
+  seeded transactions to exercise both pagination pages, a real CSV
+  upload → save-as-template → reopen-and-reload-template round trip, two
+  recurring series at different cadences confirming the monthly total
+  math exactly: $15.99/month + $240/year → $35.99/month) — all seed data
+  deleted afterward, local DB back to zero.
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)
