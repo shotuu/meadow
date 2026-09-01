@@ -980,6 +980,102 @@ BoA account:
     sandbox doesn't confirm a production billing gate isn't waiting behind
     it, since sandbox often doesn't enforce these.
 
+**Pin budgets to Dashboard (2026-08-31, deployed same day, previously
+undocumented here):** `Category.pinnedToDashboard` boolean (migration
+`20260831164758_add_category_dashboard_pin`) + a toggle on the Categories
+page for any budgeted category; the Dashboard renders pinned ones in a
+"Pinned budgets" grid, sharing `computeRecurringBudgetProgress`
+(`apps/web/src/lib/budget-progress.ts`, extracted from `budgets/page.tsx`
+so the two pages can't silently disagree on what "remaining" means) with
+the full Budgets page. Verified live against the real account (pinned Car
+Insurance sinking fund + Dining Out rollover budget, both rendered
+correctly, zero console errors).
+
+**Dashboard detail breakdown, category pie chart, category filter, AI
+review workflow (2026-09-01):** four requests bundled together — a CSS
+wrap bug, a Dashboard that was "just one big number," category charts that
+were "just one bar," and a real human-review loop for AI categorization.
+- **Minus-sign wrap bug**: `.font-amount` (`globals.css`) was missing
+  `white-space: nowrap` — a negative amount in a narrow flex box could
+  break between the `-` and the digits. One-line fix, covers every money
+  amount in the app since they all already opt into that class.
+- **Dashboard net worth now has a detail layer**, not just the headline
+  number: reused `summarizeSpendByCategory` (previously spend-only, now
+  proven generic) to bucket each currency's assets by `AccountType` into a
+  donut (`asset-mix-chart.tsx`) plus a ranked account list with mini
+  balance bars (`account-list.tsx`), both new files under
+  `dashboard/`. New `apps/web/src/lib/account-types.ts` centralizes the
+  type→label/icon/color maps (icon map moved out of `accounts/page.tsx`,
+  not duplicated); `ACCOUNT_TYPE_COLOR` is a **fixed** type→`chart-N`
+  mapping so a slice's color never depends on which types happen to be
+  present.
+- **Category pie chart**: the Transactions page's "Spending this month"
+  bar chart became a donut (`category-pie-chart.tsx`, replacing the old
+  `spend-by-category-chart.tsx`), with a real color-identity fix alongside
+  it — the old chart colored by array *rank*, so a category's color
+  silently changed if its spend rank changed month to month; extracted the
+  Categories page's `categoryColorVar` hash into a shared
+  `apps/web/src/lib/category-color.ts` so category color is now identity-
+  based everywhere (chart, category dots, the category picker dropdown).
+  Caught one real rendering gap while building this: the shadcn
+  `ChartLegendContent` resolves labels through a static `ChartConfig`
+  keyed by series `dataKey`, which works for a fixed-series bar/stacked
+  chart but silently renders blank labels for a pie's per-data-point
+  names — built a small dedicated `components/category-legend.tsx` instead
+  of fighting that abstraction.
+- **Category filter on Transactions**: `?category=<id>`, the first
+  `searchParams`-driven filter anywhere in this app — a plain `Select`
+  (`category-filter.tsx`) pushing the query param, applied to the main
+  transaction list's `where` clause only.
+- **"Needs review" tab + AI confidence surfaced for the first time**:
+  `Transaction.categoryConfidence`/`categorySource` already existed and
+  were already being written by the AI pass, just never read anywhere
+  downstream. New `LOW_CONFIDENCE_THRESHOLD = 0.7` constant (user's
+  choice) in `packages/categorization-ai`; a second query on the
+  Transactions page (`categorySource: uncategorized` OR `ai` under
+  threshold, deliberately **ignoring** the category filter since most
+  needs-review rows have no category to filter on) feeds a `Tabs` split
+  ("All" / "Needs review", with a count badge). `CategoryPicker` shows a
+  small "AI · NN%" badge only on AI-sourced rows.
+- **Self-feedback loop, the actual new piece**: the exact-merchant rule
+  short-circuit (`recordCategoryCorrection`) already existed and was left
+  untouched — it already prevents the same merchant from ever being asked
+  about twice. What was missing: (a) no way to *confirm* an AI suggestion
+  without picking a different category and back (Radix `Select` doesn't
+  fire `onValueChange` on a re-pick of the same value) — new
+  `confirmTransactionCategory` server action, a checkmark button next to
+  the AI badge, reuses the identical learning path as an actual
+  correction; (b) the rule engine only ever generalizes to the *exact same*
+  merchant, never a similar-but-different one — `runCategorizationBatchForUser`
+  now includes the user's last 20 manual corrections as few-shot examples
+  in the Gemini prompt (`learnedExamples` array + one added
+  `systemInstruction` sentence), so both the nightly cron and the "Sync
+  now" button's AI pass get better at generalizing over time, not just
+  repeating exact matches.
+- No Prisma migration needed — every field this relies on already existed
+  from the original AI-categorization build.
+- Verified: `tsc --noEmit`, `eslint`, `vitest` (43/43), `next build` all
+  clean. Also caught and fixed a stale-local-Prisma-client issue unrelated
+  to this feature (the dashboard pin-to-budget work above had generated a
+  migration but never regenerated the local client, so `pinnedToDashboard`
+  threw a `PrismaClientValidationError` locally the moment this session
+  tried to load the Dashboard — `pnpm db:generate` + a dev-server restart
+  fixed it; worth remembering that a schema-field migration and a Prisma
+  Client regen are two separate steps, and only one of them is captured by
+  `migrate deploy`). Verified end-to-end against real Postgres with
+  throwaway seed data (3 accounts across asset/liability, 8 transactions
+  spanning `rule`/`manual`/`ai`-high-confidence/`ai`-low-confidence/
+  `uncategorized` sources) in a real browser: donut + account list render
+  correctly on Dashboard, the category donut + legend render correctly on
+  Transactions, the Needs Review tab showed exactly the 4 flagged rows,
+  confirming an AI suggestion correctly flipped it to `manual` with
+  `categoryConfidence` cleared and removed it from the tab, and the
+  category filter correctly scoped the "All" tab while leaving "Needs
+  review" unaffected. All test data deleted afterward — local DB back to
+  zero accounts/transactions. **Not yet deployed to Railway** — this was
+  built and verified locally only; deploying (`web`, no worker/schema
+  changes) is a separate step pending user go-ahead.
+
 ## Locked-in decisions
 
 - **Name**: Meadow. Checked for collisions — a B2B fintech (meadowfi.com)
