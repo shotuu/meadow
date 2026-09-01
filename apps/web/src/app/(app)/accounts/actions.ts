@@ -48,3 +48,14 @@ export async function archiveAccount(accountId: string) {
 
   revalidatePath("/accounts");
 }
+
+export async function unarchiveAccount(accountId: string) {
+  const userId = await requireUserId();
+
+  await prisma.financialAccount.updateMany({
+    where: { id: accountId, userId },
+    data: { isArchived: false },
+  });
+
+  revalidatePath("/accounts");
+}

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { formatMoney } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
+import { computeMonthlyEquivalent, convertCurrency, type UsdRateMap } from "@finance-app/finance-logic";
 
 const STATUS_VARIANT: Record<RecurringStatus, "default" | "destructive" | "secondary" | "outline"> = {
   active: "default",
@@ -42,6 +43,33 @@ export default async function RecurringPage() {
   const missed = series.filter((s) => s.status === "missed");
   const inactive = series.filter((s) => s.status === "cancelled" || s.status === "merged");
 
+  const latestRateDate = await prisma.exchangeRate.aggregate({
+    where: { baseCurrency: "USD" },
+    _max: { asOfDate: true },
+  });
+  const rateRows = latestRateDate._max.asOfDate
+    ? await prisma.exchangeRate.findMany({
+        where: { baseCurrency: "USD", asOfDate: latestRateDate._max.asOfDate },
+      })
+    : [];
+  const usdRates: UsdRateMap = Object.fromEntries(rateRows.map((r) => [r.quoteCurrency, Number(r.rate)]));
+
+  let monthlyTotal = 0;
+  let excludedCount = 0;
+  for (const s of active) {
+    if (s.cadence === "irregular") {
+      excludedCount++;
+      continue;
+    }
+    const monthlyAmount = computeMonthlyEquivalent(Number(s.expectedAmount), s.cadence);
+    const converted = convertCurrency(monthlyAmount, s.currency, appUser.defaultCurrency, usdRates);
+    if (converted === null) {
+      excludedCount++;
+      continue;
+    }
+    monthlyTotal += converted;
+  }
+
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
       <h1 className="text-2xl font-semibold">Recurring</h1>
@@ -52,6 +80,24 @@ export default async function RecurringPage() {
           title="No recurring charges detected yet"
           description="This fills in automatically once you have a few months of transaction history for a merchant (at least 3 charges)."
         />
+      )}
+
+      {active.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Active subscriptions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            <p className="font-amount text-2xl font-semibold">
+              {formatMoney(monthlyTotal, appUser.defaultCurrency)}/month
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Across {active.length} active series
+              {excludedCount > 0 &&
+                ` (${excludedCount} excluded — irregular cadence or exchange rate not yet available)`}
+            </p>
+          </CardContent>
+        </Card>
       )}
 
       <SeriesGroup title="Needs attention" items={missed} defaultCurrency={appUser.defaultCurrency} />
