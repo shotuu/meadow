@@ -51,11 +51,11 @@ function MobileNavIcon({ icon: Icon, active }: { icon: (typeof PRIMARY_NAV_ITEMS
   return (
     <span
       className={cn(
-        "flex size-9 items-center justify-center rounded-full transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-90",
+        "flex size-11 items-center justify-center rounded-full transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-90",
         active ? "scale-110 bg-primary/15 text-primary" : "scale-100 text-muted-foreground"
       )}
     >
-      <Icon className="size-5" strokeWidth={active ? 2.4 : 1.8} />
+      <Icon className="size-6" strokeWidth={active ? 2.4 : 1.8} />
     </span>
   );
 }

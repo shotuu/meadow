@@ -220,16 +220,26 @@ function TransactionRow({
 }) {
   const amount = Number(t.amount);
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-medium">{t.description}</p>
-        <p className="text-sm text-muted-foreground">
-          {t.account.name} · {new Date(t.date).toLocaleDateString()}
-          {t.isTransfer && (
-            <Badge variant="outline" className="ml-2">
-              transfer
-            </Badge>
+    <div className="flex flex-col gap-2 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium">{t.description}</p>
+          <p className="text-sm text-muted-foreground">
+            {t.account.name} · {new Date(t.date).toLocaleDateString()}
+            {t.isTransfer && (
+              <Badge variant="outline" className="ml-2">
+                transfer
+              </Badge>
+            )}
+          </p>
+        </div>
+        <p
+          className={cn(
+            "font-amount shrink-0 text-right font-semibold",
+            amount > 0 ? "text-positive" : amount < 0 ? "text-negative" : ""
           )}
+        >
+          {formatMoney(amount, t.currency, { signDisplay: "always" })}
         </p>
       </div>
       {!t.isTransfer && (
@@ -241,14 +251,6 @@ function TransactionRow({
           categoryConfidence={t.categoryConfidence == null ? null : Number(t.categoryConfidence)}
         />
       )}
-      <p
-        className={cn(
-          "font-amount w-28 shrink-0 text-right font-semibold",
-          amount > 0 ? "text-positive" : amount < 0 ? "text-negative" : ""
-        )}
-      >
-        {formatMoney(amount, t.currency, { signDisplay: "always" })}
-      </p>
     </div>
   );
 }
