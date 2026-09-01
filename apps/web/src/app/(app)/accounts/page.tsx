@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { NewAccountDialog } from "./new-account-dialog";
 import { ConnectPlaidButton } from "./connect-plaid-button";
 import { ConnectIbkrDialog } from "./connect-ibkr-dialog";
-import { archiveAccount } from "./actions";
+import { archiveAccount, unarchiveAccount } from "./actions";
 import { formatMoney } from "@/lib/format";
 import { summarizeByClassification } from "@/lib/balances";
 import { ACCOUNT_TYPE_ICON } from "@/lib/account-types";
@@ -19,7 +19,7 @@ import { SyncNowButton } from "./sync-now-button";
 export default async function AccountsPage() {
   const userId = await requireUserId();
 
-  const [appUser, accounts] = await Promise.all([
+  const [appUser, accounts, archivedAccounts] = await Promise.all([
     prisma.appUser.findUniqueOrThrow({ where: { id: userId } }),
     prisma.financialAccount.findMany({
       where: { userId, isArchived: false },
@@ -27,6 +27,11 @@ export default async function AccountsPage() {
         _count: { select: { transactions: true } },
       },
       orderBy: [{ classification: "asc" }, { name: "asc" }],
+    }),
+    prisma.financialAccount.findMany({
+      where: { userId, isArchived: true },
+      select: { id: true, name: true, type: true, institutionName: true },
+      orderBy: { name: "asc" },
     }),
   ]);
 
@@ -156,6 +161,36 @@ export default async function AccountsPage() {
           title="No accounts yet"
           description="Connect a bank, connect IBKR, or add one manually to start tracking transactions."
         />
+      )}
+
+      {archivedAccounts.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Archived</h2>
+          <Card>
+            <CardContent className="divide-y p-0">
+              {archivedAccounts.map((account) => {
+                const Icon = ACCOUNT_TYPE_ICON[account.type] ?? CircleDollarSign;
+                return (
+                  <div
+                    key={account.id}
+                    className="flex items-center justify-between px-4 py-3 text-muted-foreground"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Icon className="size-4 shrink-0" />
+                      {account.name}
+                      {account.institutionName && ` · ${account.institutionName}`}
+                    </span>
+                    <form action={unarchiveAccount.bind(null, account.id)}>
+                      <Button type="submit" variant="ghost" size="sm">
+                        Unarchive
+                      </Button>
+                    </form>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

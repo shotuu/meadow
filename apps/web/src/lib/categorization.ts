@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@finance-app/db";
 import { normalizeMerchantKey } from "@finance-app/finance-logic";
+import { matchesRule } from "@/lib/categorization-rules";
 
 /**
  * Rule pass — step 1 of the categorization pipeline. Runs synchronously on
@@ -17,24 +18,8 @@ export async function applyCategorizationRules(
     orderBy: { priority: "desc" },
   });
 
-  const normalizedMerchant = merchantName ? normalizeMerchantKey(merchantName) : null;
-  const haystack = `${merchantName ?? ""} ${description}`.toLowerCase();
-
   for (const rule of rules) {
-    let matched = false;
-    if (rule.matchType === "exact_merchant") {
-      matched = normalizedMerchant !== null && normalizedMerchant === normalizeMerchantKey(rule.pattern);
-    } else if (rule.matchType === "contains") {
-      matched = haystack.includes(rule.pattern.toLowerCase());
-    } else if (rule.matchType === "regex") {
-      try {
-        matched = new RegExp(rule.pattern, "i").test(haystack);
-      } catch {
-        matched = false;
-      }
-    }
-
-    if (matched) {
+    if (matchesRule(rule, merchantName, description)) {
       await prisma.categorizationRule.update({
         where: { id: rule.id },
         data: { matchCount: { increment: 1 }, lastMatchedAt: new Date() },

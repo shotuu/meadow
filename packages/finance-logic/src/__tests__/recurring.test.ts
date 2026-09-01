@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyConfidence,
+  computeMonthlyEquivalent,
   computeNextExpectedDate,
   detectRecurring,
   isMissed,
@@ -89,6 +90,28 @@ describe("isMissed", () => {
     const nextExpected = new Date(Date.UTC(2026, 7, 1));
     const asOf = new Date(Date.UTC(2026, 9, 20)); // ~80 days late
     expect(isMissed(nextExpected, "monthly", asOf)).toBe(true);
+  });
+});
+
+describe("computeMonthlyEquivalent", () => {
+  it("passes a monthly amount through unchanged", () => {
+    expect(computeMonthlyEquivalent(15.99, "monthly")).toBeCloseTo(15.99);
+  });
+
+  it("divides an annual amount by 12", () => {
+    expect(computeMonthlyEquivalent(120, "annual")).toBeCloseTo(10);
+  });
+
+  it("divides a quarterly amount by 3", () => {
+    expect(computeMonthlyEquivalent(90, "quarterly")).toBeCloseTo(30);
+  });
+
+  it("scales a weekly amount up by ~52/12", () => {
+    expect(computeMonthlyEquivalent(10, "weekly")).toBeCloseTo(43.33, 1);
+  });
+
+  it("scales a biweekly amount up by ~26/12", () => {
+    expect(computeMonthlyEquivalent(20, "biweekly")).toBeCloseTo(43.33, 1);
   });
 });
 

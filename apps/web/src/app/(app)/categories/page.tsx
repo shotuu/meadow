@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { categoryColorVar } from "@/lib/category-color";
 import { NewCategoryDialog } from "./new-category-dialog";
-import { archiveCategory, toggleDashboardPin } from "./actions";
+import { archiveCategory, unarchiveCategory, toggleDashboardPin } from "./actions";
 
 const BUDGET_TYPE_LABEL: Record<string, string> = {
   none: "No budget",
@@ -24,10 +24,16 @@ const KIND_ICON: Record<string, LucideIcon> = {
 export default async function CategoriesPage() {
   const userId = await requireUserId();
 
-  const categories = await prisma.category.findMany({
-    where: { userId, isArchived: false },
-    orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
-  });
+  const [categories, archivedCategories] = await Promise.all([
+    prisma.category.findMany({
+      where: { userId, isArchived: false },
+      orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
+    }),
+    prisma.category.findMany({
+      where: { userId, isArchived: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   const groups: Record<string, typeof categories> = { income: [], expense: [], transfer: [] };
   for (const c of categories) groups[c.kind]?.push(c);
@@ -91,6 +97,32 @@ export default async function CategoriesPage() {
           </div>
         );
       })}
+
+      {archivedCategories.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Archived</h2>
+          <Card>
+            <CardContent className="divide-y p-0">
+              {archivedCategories.map((category) => (
+                <div key={category.id} className="flex items-center justify-between px-4 py-3 text-muted-foreground">
+                  <span className="flex items-center gap-2">
+                    <span
+                      className="size-2 shrink-0 rounded-full opacity-50"
+                      style={{ background: categoryColorVar(category.id) }}
+                    />
+                    {category.name}
+                  </span>
+                  <form action={unarchiveCategory.bind(null, category.id)}>
+                    <Button type="submit" variant="ghost" size="sm">
+                      Unarchive
+                    </Button>
+                  </form>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

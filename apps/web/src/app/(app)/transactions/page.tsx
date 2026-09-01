@@ -10,6 +10,7 @@ import { ImportCsvDialog } from "./import-csv-dialog";
 import { CategoryPicker } from "./category-picker";
 import { CategoryFilter } from "./category-filter";
 import { CategoryPieChart } from "./category-pie-chart";
+import { TransactionsPagination } from "./pagination";
 import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
@@ -43,50 +44,62 @@ type TransactionRowData = {
   category: { name: string } | null;
 };
 
+const PAGE_SIZE = 50;
+
 export default async function TransactionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ category?: string }>;
+  searchParams: Promise<{ category?: string; page?: string }>;
 }) {
   const userId = await requireUserId();
-  const { category: categoryParam } = await searchParams;
+  const { category: categoryParam, page: pageParam } = await searchParams;
   const categoryFilter = categoryParam && categoryParam !== "__all__" ? categoryParam : undefined;
+  const page = Math.max(1, Number(pageParam) || 1);
+  const transactionWhere = { userId, ...(categoryFilter && { categoryId: categoryFilter }) };
 
-  const [appUser, accounts, categories, transactions, needsReview] = await Promise.all([
-    prisma.appUser.findUniqueOrThrow({ where: { id: userId } }),
-    prisma.financialAccount.findMany({
-      where: { userId, isArchived: false },
-      select: { id: true, name: true, currency: true },
-      orderBy: { name: "asc" },
-    }),
-    prisma.category.findMany({
-      where: { userId, isArchived: false, kind: { in: ["income", "expense"] } },
-      select: { id: true, name: true, kind: true },
-      orderBy: { name: "asc" },
-    }),
-    prisma.transaction.findMany({
-      where: { userId, ...(categoryFilter && { categoryId: categoryFilter }) },
-      select: TRANSACTION_SELECT,
-      orderBy: { date: "desc" },
-      take: 100,
-    }),
-    // Ignores the category filter -- most rows here are uncategorized
-    // (no categoryId to filter on), so filtering by category would make
-    // this tab look empty whenever any specific category is selected.
-    prisma.transaction.findMany({
-      where: {
-        userId,
-        isTransfer: false,
-        OR: [
-          { categorySource: "uncategorized" },
-          { categorySource: "ai", categoryConfidence: { lt: LOW_CONFIDENCE_THRESHOLD } },
-        ],
-      },
-      select: TRANSACTION_SELECT,
-      orderBy: { date: "desc" },
-      take: 200,
-    }),
-  ]);
+  const [appUser, accounts, categories, csvTemplates, transactions, transactionCount, needsReview] =
+    await Promise.all([
+      prisma.appUser.findUniqueOrThrow({ where: { id: userId } }),
+      prisma.financialAccount.findMany({
+        where: { userId, isArchived: false },
+        select: { id: true, name: true, currency: true },
+        orderBy: { name: "asc" },
+      }),
+      prisma.category.findMany({
+        where: { userId, isArchived: false, kind: { in: ["income", "expense"] } },
+        select: { id: true, name: true, kind: true },
+        orderBy: { name: "asc" },
+      }),
+      prisma.csvImportTemplate.findMany({
+        where: { userId },
+        orderBy: { institutionName: "asc" },
+      }),
+      prisma.transaction.findMany({
+        where: transactionWhere,
+        select: TRANSACTION_SELECT,
+        orderBy: { date: "desc" },
+        skip: (page - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
+      }),
+      prisma.transaction.count({ where: transactionWhere }),
+      // Ignores the category filter -- most rows here are uncategorized
+      // (no categoryId to filter on), so filtering by category would make
+      // this tab look empty whenever any specific category is selected.
+      prisma.transaction.findMany({
+        where: {
+          userId,
+          isTransfer: false,
+          OR: [
+            { categorySource: "uncategorized" },
+            { categorySource: "ai", categoryConfidence: { lt: LOW_CONFIDENCE_THRESHOLD } },
+          ],
+        },
+        select: TRANSACTION_SELECT,
+        orderBy: { date: "desc" },
+        take: 200,
+      }),
+    ]);
+  const totalPages = Math.max(1, Math.ceil(transactionCount / PAGE_SIZE));
 
   const monthRange = getPeriodRange("monthly", new Date());
   const monthlyExpenses = await prisma.transaction.findMany({
@@ -128,7 +141,7 @@ export default async function TransactionsPage({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold">Transactions</h1>
         <div className="flex flex-wrap gap-2">
-          <ImportCsvDialog accounts={accounts} />
+          <ImportCsvDialog accounts={accounts} templates={csvTemplates} />
           <NewTransactionDialog accounts={accounts} categories={categories} />
         </div>
       </div>
@@ -156,7 +169,7 @@ export default async function TransactionsPage({
           title="No accounts yet"
           description="Add an account first before recording transactions."
         />
-      ) : transactions.length === 0 ? (
+      ) : transactionCount === 0 ? (
         <EmptyState
           icon={Receipt}
           title="No transactions yet"
@@ -166,7 +179,7 @@ export default async function TransactionsPage({
         <Tabs defaultValue="all">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <TabsList>
-              <TabsTrigger value="all">All ({transactions.length})</TabsTrigger>
+              <TabsTrigger value="all">All ({transactionCount})</TabsTrigger>
               <TabsTrigger value="review">
                 Needs review
                 {needsReview.length > 0 && (
@@ -179,8 +192,9 @@ export default async function TransactionsPage({
             <CategoryFilter categories={categories} selected={categoryFilter} />
           </div>
 
-          <TabsContent value="all" className="mt-3">
+          <TabsContent value="all" className="mt-3 space-y-3">
             <TransactionList transactions={transactions} categories={categories} />
+            {totalPages > 1 && <TransactionsPagination page={page} totalPages={totalPages} />}
           </TabsContent>
           <TabsContent value="review" className="mt-3">
             {needsReview.length === 0 ? (

@@ -148,6 +148,23 @@ export function isMissed(nextExpectedDate: Date, cadence: Cadence, asOfDate: Dat
   return asOfDate > graceDeadline;
 }
 
+/**
+ * Converts a recurring amount to its monthly-equivalent value (e.g. an
+ * annual charge divided by 12). `irregular` has no fixed period, so callers
+ * should exclude those series before calling this rather than passing them
+ * in.
+ */
+export function computeMonthlyEquivalent(amount: number, cadence: Exclude<Cadence, "irregular">): number {
+  const monthsPerOccurrence: Record<Exclude<Cadence, "irregular">, number> = {
+    weekly: 12 / 52,
+    biweekly: 12 / 26,
+    monthly: 1,
+    quarterly: 3,
+    annual: 12,
+  };
+  return amount / monthsPerOccurrence[cadence];
+}
+
 /** Normalizes a raw merchant/description string into a stable grouping key. */
 export function normalizeMerchantKey(raw: string): string {
   return raw

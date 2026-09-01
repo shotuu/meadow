@@ -1,11 +1,12 @@
 "use server";
 
-import { createHash } from "node:crypto";
 import Papa from "papaparse";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { applyCategorizationRules, recordCategoryCorrection } from "@/lib/categorization";
+import { externalIdFor } from "@/lib/csv-dedup";
+import { toTemplateFields, type CsvColumnMapping } from "@/lib/csv-template";
 
 export async function createTransaction(formData: FormData) {
   const userId = await requireUserId();
@@ -126,8 +127,18 @@ export async function confirmTransactionCategory(transactionId: string) {
   revalidatePath("/transactions");
 }
 
-function externalIdFor(accountId: string, date: string, description: string, amount: number): string {
-  return createHash("sha1").update(`${accountId}|${date}|${description}|${amount}`).digest("hex");
+export async function saveCsvImportTemplate(institutionName: string, mapping: CsvColumnMapping) {
+  const userId = await requireUserId();
+  if (!institutionName.trim()) throw new Error("Institution name is required");
+
+  const fields = toTemplateFields(mapping);
+  await prisma.csvImportTemplate.upsert({
+    where: { userId_institutionName: { userId, institutionName } },
+    create: { userId, institutionName, ...fields },
+    update: fields,
+  });
+
+  revalidatePath("/transactions");
 }
 
 export async function importCsvTransactions(formData: FormData) {
@@ -140,6 +151,8 @@ export async function importCsvTransactions(formData: FormData) {
   const merchantColumnRaw = String(formData.get("merchantColumn") || "");
   const merchantColumn = merchantColumnRaw === "__none__" ? "" : merchantColumnRaw;
   const flipSign = formData.get("flipSign") === "on";
+  const institutionName = String(formData.get("institutionName") || "").trim();
+  const saveAsTemplate = formData.get("saveAsTemplate") === "on";
   const file = formData.get("file") as File | null;
 
   if (!file || file.size === 0) throw new Error("No file uploaded");
@@ -220,8 +233,26 @@ export async function importCsvTransactions(formData: FormData) {
     data: { status: "complete", importedCount: imported, duplicateCount: duplicates, errorCount: errors },
   });
 
+  let templateSaved = false;
+  if (saveAsTemplate && institutionName) {
+    try {
+      await saveCsvImportTemplate(institutionName, {
+        dateColumn,
+        descriptionColumn,
+        amountColumn,
+        merchantColumn,
+        flipSign,
+      });
+      templateSaved = true;
+    } catch (err) {
+      // A template-save failure shouldn't undo a successful import -- the
+      // dialog surfaces this separately from the import result.
+      console.error("[csv-import] failed to save template", err);
+    }
+  }
+
   revalidatePath("/transactions");
   revalidatePath("/accounts");
 
-  return { imported, duplicates, errors };
+  return { imported, duplicates, errors, templateSaved };
 }

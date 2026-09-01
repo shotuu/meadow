@@ -31,6 +31,17 @@ export async function archiveCategory(categoryId: string) {
   revalidatePath("/categories");
 }
 
+export async function unarchiveCategory(categoryId: string) {
+  const userId = await requireUserId();
+
+  await prisma.category.updateMany({
+    where: { id: categoryId, userId },
+    data: { isArchived: false },
+  });
+
+  revalidatePath("/categories");
+}
+
 export async function toggleDashboardPin(categoryId: string) {
   const userId = await requireUserId();
 

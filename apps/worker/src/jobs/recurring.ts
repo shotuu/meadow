@@ -7,13 +7,13 @@ import {
   normalizeMerchantKey,
 } from "@finance-app/finance-logic";
 
-function median(values: number[]): number {
+export function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-function mostCommon<T>(values: T[]): T | undefined {
+export function mostCommon<T>(values: T[]): T | undefined {
   const counts = new Map<T, number>();
   for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
   let best: T | undefined;
