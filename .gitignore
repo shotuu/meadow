@@ -28,3 +28,6 @@ pnpm-debug.log*
 
 # Prisma
 packages/db/generated/
+
+# Local-only progress notes (contains real financial figures)
+PROGRESS.md
