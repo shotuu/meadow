@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@finance-app/db";
 import { syncPlaidItem } from "@finance-app/plaid-sync";
 import { syncIbkrFlexConfig } from "@finance-app/ibkr-sync";
+import { syncFinverseConnection } from "@finance-app/finverse-sync";
 import { runCategorizationBatchForUser } from "@finance-app/categorization-ai";
 import { requireUserId } from "@/lib/session";
 
@@ -24,9 +25,10 @@ export interface SyncNowResult {
 export async function syncAllAccounts(): Promise<SyncNowResult> {
   const userId = await requireUserId();
 
-  const [plaidItems, ibkrConfigs] = await Promise.all([
+  const [plaidItems, ibkrConfigs, finverseConnections] = await Promise.all([
     prisma.plaidItem.findMany({ where: { userId, status: "active" } }),
     prisma.ibkrFlexConfig.findMany({ where: { userId, status: "active" } }),
+    prisma.finverseConnection.findMany({ where: { userId, status: "active" } }),
   ]);
 
   let syncedCount = 0;
@@ -47,6 +49,15 @@ export async function syncAllAccounts(): Promise<SyncNowResult> {
       syncedCount++;
     } catch (err) {
       errors.push(`IBKR: ${err instanceof Error ? err.message : "sync failed"}`);
+    }
+  }
+
+  for (const connection of finverseConnections) {
+    try {
+      await syncFinverseConnection(connection.id);
+      syncedCount++;
+    } catch (err) {
+      errors.push(`${connection.institutionName ?? "Singapore bank"}: ${err instanceof Error ? err.message : "sync failed"}`);
     }
   }
 

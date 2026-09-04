@@ -21,3 +21,6 @@ allowBuilds:
   protobufjs: true
   sharp: false
   unrs-resolver: false
+
+minimumReleaseAgeExclude:
+  - '@finverse/sdk-typescript@0.0.408'

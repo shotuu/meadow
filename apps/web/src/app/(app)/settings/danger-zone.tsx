@@ -53,7 +53,7 @@ export function DangerZone() {
           <DialogDescription>
             This permanently deletes every account, transaction, budget, category, and
             categorization rule tied to your Meadow account, and revokes Meadow&apos;s access to
-            any bank you&apos;ve connected via Plaid. This cannot be undone.
+            any bank you&apos;ve connected via Plaid or a Singapore bank. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
 

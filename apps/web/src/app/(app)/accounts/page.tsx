@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { NewAccountDialog } from "./new-account-dialog";
 import { ConnectPlaidButton } from "./connect-plaid-button";
 import { ConnectIbkrDialog } from "./connect-ibkr-dialog";
+import { ConnectFinverseButton } from "./connect-finverse-button";
+import { FinverseLinkStatus } from "./finverse-link-status";
 import { archiveAccount, unarchiveAccount } from "./actions";
 import { formatMoney } from "@/lib/format";
 import { summarizeByClassification } from "@/lib/balances";
@@ -42,13 +44,15 @@ export default async function AccountsPage() {
   });
   const balanceByAccount = new Map<string, unknown>(balances.map((b) => [b.accountId, b._sum.amount]));
 
-  // Plaid-synced accounts have a real balance on file (refreshed via
-  // /accounts/balance/get on every sync — see refreshPlaidAccountBalances)
-  // that's authoritative over the transaction sum, which can drift from
-  // the institution's actual balance (pending transactions, fees that
-  // never show up as a discrete line item, sync gaps).
+  // Plaid- and Finverse-synced accounts have a real balance on file
+  // (refreshed via /accounts/balance/get on every Plaid sync, or the
+  // Account.balance Finverse itself returns on every Finverse sync — see
+  // refreshPlaidAccountBalances / upsertFinverseAccounts) that's
+  // authoritative over the transaction sum, which can drift from the
+  // institution's actual balance (pending transactions, fees that never
+  // show up as a discrete line item, sync gaps).
   for (const a of accounts) {
-    if (a.syncSource === "plaid" && a.currentBalance !== null) {
+    if ((a.syncSource === "plaid" || a.syncSource === "finverse") && a.currentBalance !== null) {
       balanceByAccount.set(a.id, a.currentBalance);
     }
   }
@@ -113,12 +117,14 @@ export default async function AccountsPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
+      <FinverseLinkStatus />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold">Accounts</h1>
         <div className="flex flex-wrap gap-2">
-          {accounts.some((a) => a.syncSource === "plaid" || a.syncSource === "ibkr_flex") && <SyncNowButton />}
+          {accounts.some((a) => ["plaid", "ibkr_flex", "finverse"].includes(a.syncSource)) && <SyncNowButton />}
           <ConnectPlaidButton />
           <ConnectIbkrDialog />
+          <ConnectFinverseButton />
           <NewAccountDialog defaultCurrency={appUser.defaultCurrency} />
         </div>
       </div>

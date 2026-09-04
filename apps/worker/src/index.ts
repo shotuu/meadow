@@ -5,6 +5,7 @@ import {
   recomputeRecurringSeries,
   refreshExchangeRates,
   runCategorizationBatch,
+  syncFinverseAccounts,
   syncIbkrFlexAccounts,
   syncPlaidAccounts,
 } from "./jobs/index.js";
@@ -17,6 +18,7 @@ async function main() {
   cron.schedule("0 2 * * *", () => refreshExchangeRates());
   cron.schedule("15 2 * * *", () => syncPlaidAccounts());
   cron.schedule("30 2 * * *", () => syncIbkrFlexAccounts());
+  cron.schedule("45 2 * * *", () => syncFinverseAccounts());
   cron.schedule("0 3 * * *", () => recomputeRecurringSeries());
   cron.schedule("15 3 * * *", () => runCategorizationBatch());
   cron.schedule("30 3 * * *", () => evaluateAlertRules());

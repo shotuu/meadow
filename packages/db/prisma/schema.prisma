@@ -100,6 +100,7 @@ model AppUser {
   importBatches         ImportBatch[]
   csvImportTemplates    CsvImportTemplate[]
   plaidItems            PlaidItem[]
+  finverseConnections   FinverseConnection[]
   transactions          Transaction[]
 
   @@map("users")
@@ -159,6 +160,7 @@ enum AccountClassification {
 enum SyncSource {
   plaid
   ibkr_flex
+  finverse
   csv
   manual
 
@@ -212,6 +214,22 @@ model PlaidItem {
 
   @@index([userId])
   @@map("plaid_items")
+  @@schema("app")
+}
+
+model FinverseConnection {
+  id              String    @id @default(cuid())
+  userId          String    @map("user_id")
+  loginIdentityId String    @unique @map("login_identity_id")
+  accessToken     String    @map("access_token")
+  institutionName String?   @map("institution_name")
+  status          String    @default("active")
+  lastSyncedAt    DateTime? @map("last_synced_at")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("finverse_connections")
   @@schema("app")
 }
 

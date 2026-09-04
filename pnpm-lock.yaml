@@ -25,6 +25,9 @@ importers:
       '@finance-app/finance-logic':
         specifier: workspace:*
         version: link:../../packages/finance-logic
+      '@finance-app/finverse-sync':
+        specifier: workspace:*
+        version: link:../../packages/finverse-sync
       '@finance-app/ibkr-sync':
         specifier: workspace:*
         version: link:../../packages/ibkr-sync
@@ -131,6 +134,9 @@ importers:
       '@finance-app/finance-logic':
         specifier: workspace:*
         version: link:../../packages/finance-logic
+      '@finance-app/finverse-sync':
+        specifier: workspace:*
+        version: link:../../packages/finverse-sync
       '@finance-app/ibkr-sync':
         specifier: workspace:*
         version: link:../../packages/ibkr-sync
@@ -212,6 +218,31 @@ importers:
 
   packages/finance-logic:
     devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.5
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12)
+
+  packages/finverse-sync:
+    dependencies:
+      '@finance-app/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@finance-app/db':
+        specifier: workspace:*
+        version: link:../db
+      '@finance-app/finance-logic':
+        specifier: workspace:*
+        version: link:../finance-logic
+      '@finverse/sdk-typescript':
+        specifier: ^0.0.408
+        version: 0.0.408
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.1
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -646,6 +677,9 @@ packages:
   '@eslint/plugin-kit@0.4.1':
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@finverse/sdk-typescript@0.0.408':
+    resolution: {integrity: sha512-pCZai7EoNYVFhDcPFO36dLLrEYKIKbRddFDVbNA0ueXaxwWtd1cVd+EvsFl/areYwIL9gaPLShgQSysMgrDwVg==}
 
   '@floating-ui/core@1.8.0':
     resolution: {integrity: sha512-0CIZ5itps/8x7BG8dEIhs53BvCUH2PCoogtakwRTut+Arm58sJooJ0AuZhLw2HJYIR5cMLNPBSS728sPho2khQ==}
@@ -5735,6 +5769,13 @@ snapshots:
     dependencies:
       '@eslint/core': 0.17.0
       levn: 0.4.1
+
+  '@finverse/sdk-typescript@0.0.408':
+    dependencies:
+      axios: 1.20.0
+    transitivePeerDependencies:
+      - debug
+      - supports-color
 
   '@floating-ui/core@1.8.0':
     dependencies:

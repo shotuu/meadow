@@ -7,6 +7,7 @@
 import { prisma } from "@finance-app/db";
 import { syncPlaidItem } from "@finance-app/plaid-sync";
 import { syncIbkrFlexConfig } from "@finance-app/ibkr-sync";
+import { syncFinverseConnection } from "@finance-app/finverse-sync";
 import { runCategorizationBatchForAllUsers } from "@finance-app/categorization-ai";
 import { recomputeRecurringSeriesForAllUsers } from "./recurring.js";
 import { refreshExchangeRates as refreshExchangeRatesImpl } from "./exchange-rates.js";
@@ -36,6 +37,20 @@ export async function syncIbkrFlexAccounts(): Promise<void> {
       );
     } catch (err) {
       console.error(`[worker] syncIbkrFlexAccounts: config ${config.id} failed`, err);
+    }
+  }
+}
+
+export async function syncFinverseAccounts(): Promise<void> {
+  const connections = await prisma.finverseConnection.findMany({ where: { status: "active" } });
+  for (const connection of connections) {
+    try {
+      const result = await syncFinverseConnection(connection.id);
+      console.log(
+        `[worker] syncFinverseAccounts: connection ${connection.id} — ${result.accounts} accounts, +${result.added} transactions`
+      );
+    } catch (err) {
+      console.error(`[worker] syncFinverseAccounts: connection ${connection.id} failed`, err);
     }
   }
 }
