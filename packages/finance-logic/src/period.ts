@@ -77,6 +77,44 @@ export function buildPeriodChain(
   return chain;
 }
 
+export type SpendRangeKind = "today" | "7d" | "30d" | "mtd" | "ytd";
+
+/**
+ * Resolves a user-facing "time elapsed" choice (today / last 7 days / last
+ * 30 days / month-to-date / year-to-date) into a concrete [start, end)
+ * range, end always exclusive-tomorrow so "today" is fully included.
+ * Unlike getPeriodRange, "mtd"/"ytd" stop at now rather than running to the
+ * end of the full calendar period -- there's no future data to include.
+ */
+export function resolveSpendRange(kind: SpendRangeKind, now: Date): PeriodRange {
+  const todayStart = utcMidnight(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const tomorrowStart = new Date(todayStart);
+  tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
+
+  switch (kind) {
+    case "today":
+      return { start: todayStart, end: tomorrowStart };
+    case "7d": {
+      const start = new Date(todayStart);
+      start.setUTCDate(start.getUTCDate() - 6);
+      return { start, end: tomorrowStart };
+    }
+    case "30d": {
+      const start = new Date(todayStart);
+      start.setUTCDate(start.getUTCDate() - 29);
+      return { start, end: tomorrowStart };
+    }
+    case "mtd": {
+      const start = utcMidnight(now.getUTCFullYear(), now.getUTCMonth(), 1);
+      return { start, end: tomorrowStart };
+    }
+    case "ytd": {
+      const start = utcMidnight(now.getUTCFullYear(), 0, 1);
+      return { start, end: tomorrowStart };
+    }
+  }
+}
+
 /** Whole periods between asOfDate and deadlineDate (0 if deadline has passed). */
 export function countPeriodsUntil(
   kind: BudgetPeriodKind,

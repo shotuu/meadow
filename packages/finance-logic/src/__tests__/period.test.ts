@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildPeriodChain, countPeriodsUntil, getPeriodRange, getPreviousPeriodRange } from "../period";
+import {
+  buildPeriodChain,
+  countPeriodsUntil,
+  getPeriodRange,
+  getPreviousPeriodRange,
+  resolveSpendRange,
+} from "../period";
 
 describe("getPeriodRange", () => {
   it("monthly: bounds a date to the first-of-month..first-of-next-month range", () => {
@@ -42,6 +48,41 @@ describe("buildPeriodChain", () => {
     expect(chain).toHaveLength(3);
     expect(chain[0].start.toISOString()).toBe(new Date(Date.UTC(2026, 5, 1)).toISOString());
     expect(chain[2].start.toISOString()).toBe(new Date(Date.UTC(2026, 7, 1)).toISOString());
+  });
+});
+
+describe("resolveSpendRange", () => {
+  // 2026-08-19 is a Wednesday, day 19 of the month, day 231 of the year.
+  const now = new Date(Date.UTC(2026, 7, 19, 14, 30));
+
+  it("today: is a single calendar day, end exclusive-tomorrow", () => {
+    const { start, end } = resolveSpendRange("today", now);
+    expect(start.toISOString()).toBe(new Date(Date.UTC(2026, 7, 19)).toISOString());
+    expect(end.toISOString()).toBe(new Date(Date.UTC(2026, 7, 20)).toISOString());
+  });
+
+  it("7d: spans the 7 calendar days ending today, inclusive", () => {
+    const { start, end } = resolveSpendRange("7d", now);
+    expect(start.toISOString()).toBe(new Date(Date.UTC(2026, 7, 13)).toISOString());
+    expect(end.toISOString()).toBe(new Date(Date.UTC(2026, 7, 20)).toISOString());
+  });
+
+  it("30d: spans the 30 calendar days ending today, inclusive", () => {
+    const { start, end } = resolveSpendRange("30d", now);
+    expect(start.toISOString()).toBe(new Date(Date.UTC(2026, 6, 21)).toISOString());
+    expect(end.toISOString()).toBe(new Date(Date.UTC(2026, 7, 20)).toISOString());
+  });
+
+  it("mtd: starts on the 1st of the current month, stops today rather than running to month-end", () => {
+    const { start, end } = resolveSpendRange("mtd", now);
+    expect(start.toISOString()).toBe(new Date(Date.UTC(2026, 7, 1)).toISOString());
+    expect(end.toISOString()).toBe(new Date(Date.UTC(2026, 7, 20)).toISOString());
+  });
+
+  it("ytd: starts on January 1st of the current year, stops today", () => {
+    const { start, end } = resolveSpendRange("ytd", now);
+    expect(start.toISOString()).toBe(new Date(Date.UTC(2026, 0, 1)).toISOString());
+    expect(end.toISOString()).toBe(new Date(Date.UTC(2026, 7, 20)).toISOString());
   });
 });
 

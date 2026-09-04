@@ -11,10 +11,18 @@ import { CategoryPicker } from "./category-picker";
 import { CategoryFilter } from "./category-filter";
 import { CategoryPieChart } from "./category-pie-chart";
 import { TransactionsPagination } from "./pagination";
+import { SpendRangeFilter } from "./spend-range-filter";
 import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
-import { getPeriodRange, convertCurrency, summarizeSpendByCategory, type UsdRateMap } from "@finance-app/finance-logic";
+import { SPEND_RANGE_LABEL, SPEND_RANGE_KINDS } from "@/lib/spend-range";
+import {
+  resolveSpendRange,
+  convertCurrency,
+  summarizeSpendByCategory,
+  type SpendRangeKind,
+  type UsdRateMap,
+} from "@finance-app/finance-logic";
 
 const TRANSACTION_SELECT = {
   id: true,
@@ -49,12 +57,15 @@ const PAGE_SIZE = 50;
 export default async function TransactionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ category?: string; page?: string }>;
+  searchParams: Promise<{ category?: string; page?: string; range?: string }>;
 }) {
   const userId = await requireUserId();
-  const { category: categoryParam, page: pageParam } = await searchParams;
+  const { category: categoryParam, page: pageParam, range: rangeParam } = await searchParams;
   const categoryFilter = categoryParam && categoryParam !== "__all__" ? categoryParam : undefined;
   const page = Math.max(1, Number(pageParam) || 1);
+  const spendRange: SpendRangeKind = SPEND_RANGE_KINDS.includes(rangeParam as SpendRangeKind)
+    ? (rangeParam as SpendRangeKind)
+    : "mtd";
   const transactionWhere = { userId, ...(categoryFilter && { categoryId: categoryFilter }) };
 
   const [appUser, accounts, categories, csvTemplates, transactions, transactionCount, needsReview] =
@@ -101,13 +112,13 @@ export default async function TransactionsPage({
     ]);
   const totalPages = Math.max(1, Math.ceil(transactionCount / PAGE_SIZE));
 
-  const monthRange = getPeriodRange("monthly", new Date());
-  const monthlyExpenses = await prisma.transaction.findMany({
+  const { start: spendRangeStart, end: spendRangeEnd } = resolveSpendRange(spendRange, new Date());
+  const rangedExpenses = await prisma.transaction.findMany({
     where: {
       userId,
       isTransfer: false,
       category: { kind: "expense" },
-      date: { gte: monthRange.start, lt: monthRange.end },
+      date: { gte: spendRangeStart, lt: spendRangeEnd },
     },
     select: { amount: true, currency: true, categoryId: true, category: { select: { name: true } } },
   });
@@ -123,7 +134,7 @@ export default async function TransactionsPage({
     : [];
   const usdRates: UsdRateMap = Object.fromEntries(rateRows.map((r) => [r.quoteCurrency, Number(r.rate)]));
 
-  const convertedExpenses = monthlyExpenses.map((t) => ({
+  const convertedExpenses = rangedExpenses.map((t) => ({
     categoryId: t.categoryId,
     categoryName: t.category?.name,
     converted: convertCurrency(Number(t.amount), t.currency, appUser.defaultCurrency, usdRates),
@@ -146,22 +157,31 @@ export default async function TransactionsPage({
         </div>
       </div>
 
-      {spendBuckets.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Spending this month ({appUser.defaultCurrency})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <CategoryPieChart data={spendBuckets} currency={appUser.defaultCurrency} />
-            {spendConversionIncomplete && (
-              <p className="mt-2 text-sm text-muted-foreground">
-                Some transactions couldn&apos;t be converted (exchange rates not yet available for that
-                currency) — this chart may be incomplete.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardHeader className="flex items-center justify-between space-y-0">
+          <CardTitle className="text-base">Spending by category ({appUser.defaultCurrency})</CardTitle>
+          <SpendRangeFilter selected={spendRange} />
+        </CardHeader>
+        <CardContent>
+          {spendBuckets.length === 0 ? (
+            <EmptyState
+              icon={Receipt}
+              title="No categorized spending in this period"
+              description={`Nothing expense-tagged fell in "${SPEND_RANGE_LABEL[spendRange]}" — try a wider range.`}
+            />
+          ) : (
+            <>
+              <CategoryPieChart data={spendBuckets} currency={appUser.defaultCurrency} />
+              {spendConversionIncomplete && (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Some transactions couldn&apos;t be converted (exchange rates not yet available for that
+                  currency) — this chart may be incomplete.
+                </p>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {accounts.length === 0 ? (
         <EmptyState
