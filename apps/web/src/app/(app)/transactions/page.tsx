@@ -19,6 +19,7 @@ import { SPEND_RANGE_LABEL, SPEND_RANGE_KINDS } from "@/lib/spend-range";
 import {
   resolveSpendRange,
   convertCurrency,
+  netSpendByCategory,
   summarizeSpendByCategory,
   type SpendRangeKind,
   type UsdRateMap,
@@ -140,12 +141,15 @@ export default async function TransactionsPage({
     converted: convertCurrency(Number(t.amount), t.currency, appUser.defaultCurrency, usdRates),
   }));
   const spendConversionIncomplete = convertedExpenses.some((e) => e.converted === null);
-  const spendRows = convertedExpenses.flatMap((e) =>
+  // Signed here (not abs'd yet) so netSpendByCategory can offset a refund
+  // against its own category's spend instead of counting both directions
+  // as separate spend -- see packages/finance-logic/src/spend.ts.
+  const signedSpendRows = convertedExpenses.flatMap((e) =>
     e.converted !== null && e.categoryId && e.categoryName
-      ? [{ categoryId: e.categoryId, categoryName: e.categoryName, amount: Math.abs(e.converted) }]
+      ? [{ categoryId: e.categoryId, categoryName: e.categoryName, amount: e.converted }]
       : []
   );
-  const spendBuckets = summarizeSpendByCategory(spendRows, 5);
+  const spendBuckets = summarizeSpendByCategory(netSpendByCategory(signedSpendRows), 5);
 
   return (
     <div className="mx-auto max-w-4xl p-6 space-y-6">

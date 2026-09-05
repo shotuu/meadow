@@ -4,6 +4,34 @@ export interface SpendByCategoryRow {
   amount: number;
 }
 
+export interface SignedTransactionRow {
+  categoryId: string;
+  categoryName: string;
+  /** Signed: negative = money out, positive = a refund/credit back. */
+  amount: number;
+}
+
+/**
+ * Nets signed per-transaction amounts within each category before taking a
+ * magnitude, so a refund/credit offsets its own category's spend instead of
+ * adding to it (summing abs(amount) per transaction first would count a
+ * refund as additional spend rather than money back). Feed the result into
+ * summarizeSpendByCategory for top-N ranking.
+ */
+export function netSpendByCategory(rows: SignedTransactionRow[]): SpendByCategoryRow[] {
+  const byCategory = new Map<string, { categoryName: string; amount: number }>();
+  for (const row of rows) {
+    const existing = byCategory.get(row.categoryId);
+    if (existing) existing.amount += row.amount;
+    else byCategory.set(row.categoryId, { categoryName: row.categoryName, amount: row.amount });
+  }
+  return [...byCategory.entries()].map(([categoryId, v]) => ({
+    categoryId,
+    categoryName: v.categoryName,
+    amount: Math.abs(v.amount),
+  }));
+}
+
 export interface SpendByCategoryBucket extends SpendByCategoryRow {
   percent: number;
 }

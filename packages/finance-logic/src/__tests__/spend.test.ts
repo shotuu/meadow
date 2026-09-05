@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summarizeSpendByCategory } from "../spend";
+import { netSpendByCategory, summarizeSpendByCategory } from "../spend";
 
 describe("summarizeSpendByCategory", () => {
   it("returns an empty array for empty input", () => {
@@ -77,5 +77,37 @@ describe("summarizeSpendByCategory", () => {
     );
     const total = result.reduce((sum, r) => sum + r.percent, 0);
     expect(total).toBeCloseTo(100, 5);
+  });
+});
+
+describe("netSpendByCategory", () => {
+  it("nets a refund against its own category instead of adding to spend", () => {
+    // A $2904.13 charge followed by a $395.06 partial refund/credit should
+    // read as ~$2509.07 of net spend, not $3299.19 (summing abs(amount) per
+    // transaction before netting double-counts the refund as extra spend).
+    const result = netSpendByCategory([
+      { categoryId: "a", categoryName: "Car Insurance", amount: -2904.13 },
+      { categoryId: "a", categoryName: "Car Insurance", amount: 395.06 },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].amount).toBeCloseTo(2509.07, 2);
+  });
+
+  it("keeps categories separate", () => {
+    const result = netSpendByCategory([
+      { categoryId: "a", categoryName: "Groceries", amount: -100 },
+      { categoryId: "b", categoryName: "Rent", amount: -1200 },
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result.find((r) => r.categoryId === "a")?.amount).toBe(100);
+    expect(result.find((r) => r.categoryId === "b")?.amount).toBe(1200);
+  });
+
+  it("returns a positive magnitude even when refunds exceed spend in the period", () => {
+    const result = netSpendByCategory([
+      { categoryId: "a", categoryName: "Travel", amount: -50 },
+      { categoryId: "a", categoryName: "Travel", amount: 200 },
+    ]);
+    expect(result[0].amount).toBe(150);
   });
 });
