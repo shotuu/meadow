@@ -2,18 +2,11 @@ import { TrendingUp, TrendingDown, ArrowLeftRight, Pin, PinOff, type LucideIcon 
 import { prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { categoryColorVar } from "@/lib/category-color";
 import { NewCategoryDialog } from "./new-category-dialog";
+import { BudgetTypeSelect } from "./budget-type-select";
 import { archiveCategory, unarchiveCategory, toggleDashboardPin } from "./actions";
-
-const BUDGET_TYPE_LABEL: Record<string, string> = {
-  none: "No budget",
-  monthly_reset: "Monthly",
-  rollover_envelope: "Rollover",
-  sinking_fund: "Sinking fund",
-};
 
 const KIND_ICON: Record<string, LucideIcon> = {
   income: TrendingUp,
@@ -66,7 +59,7 @@ export default async function CategoriesPage() {
                       {category.name}
                     </span>
                     <div className="flex items-center gap-3">
-                      <Badge variant="outline">{BUDGET_TYPE_LABEL[category.budgetType]}</Badge>
+                      <BudgetTypeSelect categoryId={category.id} value={category.budgetType} />
                       {category.budgetType !== "none" && (
                         <form action={toggleDashboardPin.bind(null, category.id)}>
                           <Button

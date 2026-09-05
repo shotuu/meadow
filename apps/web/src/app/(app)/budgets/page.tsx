@@ -1,11 +1,12 @@
-import { Wallet, Target } from "lucide-react";
+import { Wallet, Target, CalendarClock } from "lucide-react";
 import { prisma, Prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { computeRequiredContribution } from "@finance-app/finance-logic";
-import { computeRecurringBudgetProgress } from "@/lib/budget-progress";
+import { computePrepaidCoverageProgress, computeRecurringBudgetProgress } from "@/lib/budget-progress";
 import { SetBudgetDialog } from "./set-budget-dialog";
+import { SetPrepaidCoverageDialog } from "./set-prepaid-coverage-dialog";
 import { AddSinkingFundDialog, ContributeForm } from "./sinking-fund-dialog";
 import { PeriodChart } from "./period-chart";
 import { cn } from "@/lib/utils";
@@ -13,7 +14,7 @@ import { formatMoney } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
 
 type CategoryWithBudgetData = Prisma.CategoryGetPayload<{
-  include: { budgets: true; sinkingFunds: true };
+  include: { budgets: true; sinkingFunds: true; prepaidCoverage: true };
 }>;
 
 export default async function BudgetsPage() {
@@ -27,13 +28,17 @@ export default async function BudgetsPage() {
       include: {
         budgets: { where: { effectiveTo: null }, take: 1 },
         sinkingFunds: true,
+        prepaidCoverage: true,
       },
       orderBy: { name: "asc" },
     }),
   ]);
 
-  const recurring = categories.filter((c) => c.budgetType !== "sinking_fund");
+  const recurring = categories.filter(
+    (c) => c.budgetType !== "sinking_fund" && c.budgetType !== "prepaid_coverage"
+  );
   const sinking = categories.filter((c) => c.budgetType === "sinking_fund");
+  const prepaid = categories.filter((c) => c.budgetType === "prepaid_coverage");
 
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
@@ -68,6 +73,22 @@ export default async function BudgetsPage() {
               icon={Target}
               title="No sinking funds yet"
               description="Mark a category's budget behavior as sinking fund on the Categories page to save toward a goal."
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Prepaid bills</h2>
+        <div className="grid gap-3">
+          {prepaid.map((category) => (
+            <PrepaidCoverageCard key={category.id} category={category} userId={userId} now={now} />
+          ))}
+          {prepaid.length === 0 && (
+            <EmptyState
+              icon={CalendarClock}
+              title="No prepaid bills tracked yet"
+              description="Mark a category's budget behavior as prepaid coverage on the Categories page to track a paid-through date instead of a monthly cap."
             />
           )}
         </div>
@@ -200,6 +221,81 @@ function SinkingFundCard({
           })}
         </CardContent>
       )}
+    </Card>
+  );
+}
+
+async function PrepaidCoverageCard({
+  category,
+  userId,
+  now,
+}: {
+  category: CategoryWithBudgetData;
+  userId: string;
+  now: Date;
+}) {
+  const config = category.prepaidCoverage;
+
+  if (!config) {
+    return (
+      <Card>
+        <CardHeader className="flex items-center justify-between space-y-0">
+          <CardTitle className="text-base">{category.name}</CardTitle>
+          <SetPrepaidCoverageDialog categoryId={category.id} categoryName={category.name} triggerLabel="Set coverage" />
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  const status = await computePrepaidCoverageProgress(userId, category.id, config.coverageMonths, now);
+
+  return (
+    <Card>
+      <CardHeader className="flex items-center justify-between space-y-0">
+        <div>
+          <CardTitle className="text-base">{category.name}</CardTitle>
+          <p className="text-sm text-muted-foreground">Every {config.coverageMonths} months</p>
+        </div>
+        <SetPrepaidCoverageDialog
+          categoryId={category.id}
+          categoryName={category.name}
+          coverageMonths={config.coverageMonths}
+          triggerLabel="Edit"
+        />
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {status.lastPaymentDate === null ? (
+          <p className="text-sm text-muted-foreground">
+            No payment recorded yet — coverage starts tracking once a transaction lands in this category.
+          </p>
+        ) : status.isOverdue ? (
+          <>
+            <Progress value={100} indicatorClassName="bg-negative" />
+            <p className="font-amount text-lg font-semibold text-negative">
+              Overdue since {status.paidThrough!.toLocaleDateString()}
+            </p>
+          </>
+        ) : (
+          (() => {
+            const totalDays = Math.round(
+              (status.paidThrough!.getTime() - status.lastPaymentDate!.getTime()) / (24 * 60 * 60 * 1000)
+            );
+            const elapsedDays = totalDays - (status.daysRemaining ?? 0);
+            const percentElapsed = totalDays > 0 ? Math.min(100, Math.max(0, (elapsedDays / totalDays) * 100)) : 100;
+            return (
+              <>
+                <Progress value={percentElapsed} indicatorClassName="bg-positive" />
+                <div className="flex items-center justify-between">
+                  <p className="font-amount text-lg font-semibold text-positive">
+                    Paid through {status.paidThrough!.toLocaleDateString()}
+                  </p>
+                  <p className="text-sm text-muted-foreground">{status.daysRemaining} days left</p>
+                </div>
+              </>
+            );
+          })()
+        )}
+      </CardContent>
     </Card>
   );
 }

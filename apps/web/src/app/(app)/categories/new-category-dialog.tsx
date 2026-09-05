@@ -19,14 +19,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { BUDGET_TYPE_OPTIONS } from "@/lib/budget-type";
 import { createCategory } from "./actions";
-
-const BUDGET_TYPES = [
-  { value: "none", label: "No budget" },
-  { value: "monthly_reset", label: "Monthly (resets each period)" },
-  { value: "rollover_envelope", label: "Rollover envelope (unspent carries forward)" },
-  { value: "sinking_fund", label: "Sinking fund (saving toward a deadline)" },
-];
 
 export function NewCategoryDialog() {
   const [open, setOpen] = useState(false);
@@ -74,7 +68,7 @@ export function NewCategoryDialog() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {BUDGET_TYPES.map((b) => (
+                {BUDGET_TYPE_OPTIONS.map((b) => (
                   <SelectItem key={b.value} value={b.value}>
                     {b.label}
                   </SelectItem>

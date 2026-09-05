@@ -46,6 +46,27 @@ export async function setBudget(formData: FormData) {
   revalidatePath("/budgets");
 }
 
+export async function setPrepaidCoverage(formData: FormData) {
+  const userId = await requireUserId();
+
+  const categoryId = String(formData.get("categoryId") || "");
+  const coverageMonths = Number(formData.get("coverageMonths"));
+
+  if (!Number.isInteger(coverageMonths) || coverageMonths <= 0) {
+    throw new Error("Coverage length must be a positive whole number of months");
+  }
+
+  await prisma.category.findFirstOrThrow({ where: { id: categoryId, userId } });
+
+  await prisma.prepaidCoverage.upsert({
+    where: { categoryId },
+    create: { userId, categoryId, coverageMonths },
+    update: { coverageMonths },
+  });
+
+  revalidatePath("/budgets");
+}
+
 export async function addSinkingFund(formData: FormData) {
   const userId = await requireUserId();
 

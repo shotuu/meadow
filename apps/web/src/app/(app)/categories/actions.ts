@@ -20,6 +20,22 @@ export async function createCategory(formData: FormData) {
   revalidatePath("/categories");
 }
 
+export async function updateCategoryBudgetType(categoryId: string, budgetType: BudgetType) {
+  const userId = await requireUserId();
+
+  // Switching away from prepaid_coverage/sinking_fund leaves that mode's
+  // config row in place rather than deleting it -- matches existing
+  // sinking_fund behavior (switching a category away from it never deletes
+  // the SinkingFund row either), so this isn't a new inconsistency.
+  await prisma.category.updateMany({
+    where: { id: categoryId, userId },
+    data: { budgetType },
+  });
+
+  revalidatePath("/categories");
+  revalidatePath("/budgets");
+}
+
 export async function archiveCategory(categoryId: string) {
   const userId = await requireUserId();
 

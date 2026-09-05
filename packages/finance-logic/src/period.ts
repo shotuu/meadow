@@ -11,6 +11,21 @@ function utcMidnight(y: number, m: number, d: number): Date {
   return new Date(Date.UTC(y, m, d));
 }
 
+/**
+ * Adds `months` calendar months to `date`, clamping day-of-month overflow
+ * to the target month's last valid day (Jan 31 + 1 month -> Feb 28/29, not
+ * a Date-object rollover to Mar 3) -- how billing-anniversary dates are
+ * conventionally handled.
+ */
+export function addMonthsClamped(date: Date, months: number): Date {
+  const targetMonthIndex = date.getUTCMonth() + months;
+  const year = date.getUTCFullYear() + Math.floor(targetMonthIndex / 12);
+  const month = ((targetMonthIndex % 12) + 12) % 12;
+  const daysInTargetMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const day = Math.min(date.getUTCDate(), daysInTargetMonth);
+  return utcMidnight(year, month, day);
+}
+
 /** Monday-start ISO week containing referenceDate. */
 function weekStart(referenceDate: Date): Date {
   const d = new Date(

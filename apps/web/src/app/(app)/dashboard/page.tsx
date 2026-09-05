@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import { summarizeByClassification } from "@/lib/balances";
-import { computeRecurringBudgetProgress } from "@/lib/budget-progress";
+import { computePrepaidCoverageProgress, computeRecurringBudgetProgress } from "@/lib/budget-progress";
 import { ACCOUNT_TYPE_LABEL } from "@/lib/account-types";
 import { CompositionChart } from "@/components/composition-chart";
 import { AssetMixChart } from "./asset-mix-chart";
@@ -36,6 +36,7 @@ export default async function DashboardPage() {
       include: {
         budgets: { where: { effectiveTo: null }, take: 1 },
         sinkingFunds: true,
+        prepaidCoverage: true,
       },
       orderBy: { name: "asc" },
     }),
@@ -272,7 +273,9 @@ export default async function DashboardPage() {
   );
 }
 
-type PinnedCategory = Prisma.CategoryGetPayload<{ include: { budgets: true; sinkingFunds: true } }>;
+type PinnedCategory = Prisma.CategoryGetPayload<{
+  include: { budgets: true; sinkingFunds: true; prepaidCoverage: true };
+}>;
 
 // Mirrors budgets/page.tsx's two card types but condensed to a single small
 // progress bar each -- this is meant to be a glanceable summary, not a
@@ -293,6 +296,42 @@ async function PinnedBudgetCard({ category, userId, now }: { category: PinnedCat
           <Progress value={target > 0 ? Math.min(100, (current / target) * 100) : 0} indicatorClassName="bg-positive" />
           <p className="font-amount text-sm text-muted-foreground">
             {formatMoney(current, fund.currency)} / {formatMoney(target, fund.currency)} saved
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (category.budgetType === "prepaid_coverage") {
+    const config = category.prepaidCoverage;
+    if (!config) return null;
+    const status = await computePrepaidCoverageProgress(userId, category.id, config.coverageMonths, now);
+    if (status.lastPaymentDate === null) return null;
+
+    const totalDays = status.isOverdue
+      ? 1
+      : Math.round((status.paidThrough!.getTime() - status.lastPaymentDate.getTime()) / (24 * 60 * 60 * 1000));
+    const elapsedDays = totalDays - (status.daysRemaining ?? 0);
+    const percentElapsed = status.isOverdue
+      ? 100
+      : totalDays > 0
+        ? Math.min(100, Math.max(0, (elapsedDays / totalDays) * 100))
+        : 100;
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{category.name}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Progress value={percentElapsed} indicatorClassName={status.isOverdue ? "bg-negative" : "bg-positive"} />
+          <p
+            className={cn(
+              "font-amount text-sm font-medium",
+              status.isOverdue ? "text-negative" : "text-positive"
+            )}
+          >
+            {status.isOverdue ? "Overdue since" : "Paid through"} {status.paidThrough!.toLocaleDateString()}
           </p>
         </CardContent>
       </Card>

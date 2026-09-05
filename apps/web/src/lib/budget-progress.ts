@@ -2,11 +2,13 @@ import { prisma, type Budget, type Category } from "@finance-app/db";
 import {
   buildPeriodChain,
   computeMonthlyResetBudget,
+  computePrepaidCoverageStatus,
   computeRolloverEnvelopeBudget,
   computeSafeToSpendPerDay,
   MAX_ROLLOVER_LOOKBACK_PERIODS,
   type BudgetPeriodKind,
   type PeriodActuals,
+  type PrepaidCoverageStatus,
 } from "@finance-app/finance-logic";
 
 export interface RecurringBudgetProgress {
@@ -94,4 +96,32 @@ export async function computeRecurringBudgetProgress(
     safePerDay: computeSafeToSpendPerDay(result.remaining, result.periodEnd, now),
     progressValue: available > 0 ? Math.min(100, (result.spent / available) * 100) : result.spent > 0 ? 100 : 0,
   };
+}
+
+/**
+ * budget_type = prepaid_coverage: queries the most recent *real charge*
+ * (never a refund/credit -- amount < 0 excludes credits back, mirroring the
+ * netSpendByCategory lesson that a credit must not be read as fresh spend
+ * or, here, as a clock reset) and projects coverageMonths forward from it.
+ */
+export async function computePrepaidCoverageProgress(
+  userId: string,
+  categoryId: string,
+  coverageMonths: number,
+  now: Date
+): Promise<PrepaidCoverageStatus> {
+  const lastPayment = await prisma.transaction.findFirst({
+    where: { userId, categoryId, isTransfer: false, amount: { lt: 0 } },
+    orderBy: { date: "desc" },
+    select: { date: true, amount: true },
+  });
+
+  return computePrepaidCoverageStatus(
+    { coverageMonths },
+    {
+      lastPaymentDate: lastPayment?.date ?? null,
+      lastPaymentAmount: lastPayment ? Math.abs(Number(lastPayment.amount)) : null,
+    },
+    now
+  );
 }

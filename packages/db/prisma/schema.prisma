@@ -91,6 +91,7 @@ model AppUser {
   budgets               Budget[]
   budgetPeriodSnapshots BudgetPeriodSnapshot[]
   sinkingFunds          SinkingFund[]
+  prepaidCoverages      PrepaidCoverage[]
   categorizationRules   CategorizationRule[]
   recurringSeries       RecurringSeries[]
   targetAllocations     TargetAllocation[]
@@ -340,6 +341,7 @@ enum BudgetType {
   monthly_reset
   rollover_envelope
   sinking_fund
+  prepaid_coverage
 
   @@schema("app")
 }
@@ -366,6 +368,7 @@ model Category {
   budgets            Budget[]
   budgetSnapshots    BudgetPeriodSnapshot[]
   sinkingFunds       SinkingFund[]
+  prepaidCoverage    PrepaidCoverage?
   categorizationRules CategorizationRule[]
   recurringSeries    RecurringSeries[]
 
@@ -465,6 +468,24 @@ model SinkingFundContribution {
 
   @@index([sinkingFundId])
   @@map("sinking_fund_contributions")
+  @@schema("app")
+}
+
+// budget_type = prepaid_coverage: no dollar cap and no version history --
+// unlike Budget, this is a single in-place-edited policy ("paid every N
+// months"), not a versioned amount. The paid-through date and last payment
+// amount are computed live from Transaction on every read (see
+// computePrepaidCoverageProgress in apps/web), not cached here.
+model PrepaidCoverage {
+  id             String @id @default(cuid())
+  userId         String @map("user_id")
+  categoryId     String @unique @map("category_id")
+  coverageMonths Int    @map("coverage_months")
+
+  user     AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@map("prepaid_coverages")
   @@schema("app")
 }
 

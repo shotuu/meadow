@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addMonthsClamped,
   buildPeriodChain,
   countPeriodsUntil,
   getPeriodRange,
@@ -101,5 +102,32 @@ describe("countPeriodsUntil", () => {
     );
     expect(count).toBeGreaterThanOrEqual(11);
     expect(count).toBeLessThanOrEqual(13);
+  });
+});
+
+describe("addMonthsClamped", () => {
+  it("adds whole months with no day-of-month overflow", () => {
+    const result = addMonthsClamped(new Date(Date.UTC(2026, 0, 15)), 6);
+    expect(result.toISOString()).toBe(new Date(Date.UTC(2026, 6, 15)).toISOString());
+  });
+
+  it("clamps Jan 31 + 1 month to Feb 28 in a non-leap year", () => {
+    const result = addMonthsClamped(new Date(Date.UTC(2026, 0, 31)), 1);
+    expect(result.toISOString()).toBe(new Date(Date.UTC(2026, 1, 28)).toISOString());
+  });
+
+  it("clamps Jan 31 + 1 month to Feb 29 in a leap year", () => {
+    const result = addMonthsClamped(new Date(Date.UTC(2028, 0, 31)), 1);
+    expect(result.toISOString()).toBe(new Date(Date.UTC(2028, 1, 29)).toISOString());
+  });
+
+  it("clamps Aug 31 + 6 months to Feb 28/29 across a year boundary", () => {
+    const result = addMonthsClamped(new Date(Date.UTC(2026, 7, 31)), 6);
+    expect(result.toISOString()).toBe(new Date(Date.UTC(2027, 1, 28)).toISOString());
+  });
+
+  it("rolls the year forward when months overflow past December", () => {
+    const result = addMonthsClamped(new Date(Date.UTC(2026, 10, 10)), 3);
+    expect(result.toISOString()).toBe(new Date(Date.UTC(2027, 1, 10)).toISOString());
   });
 });
