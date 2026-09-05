@@ -11,6 +11,17 @@ packages:
 # and db:migrate still work correctly against real Postgres after this.
 overrides:
   deepmerge-ts: "^8.0.2"
+  # mysql2 is pulled in transitively by prisma/@prisma/client (Prisma bundles
+  # driver support for every database it supports, not just the Postgres one
+  # this app uses) -- never actually connected to at runtime. Two advisories
+  # (auth-plugin credential downgrade, decompression-bomb DoS) both close on
+  # this version.
+  mysql2: "^3.24.3"
+  # qs is pulled in transitively via express, itself a dependency of the
+  # @modelcontextprotocol/sdk used by dev-only tooling (the shadcn CLI,
+  # @google/genai) -- not exercised by this app's own server code. Two
+  # advisories (array-limit bypass, isBuffer DoS) both close on this version.
+  qs: "^6.16.0"
 
 allowBuilds:
   '@google/genai': true
