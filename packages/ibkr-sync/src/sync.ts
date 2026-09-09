@@ -15,7 +15,7 @@ export interface SyncResult {
  * string). Anything unrecognized returns null so the caller can skip it
  * rather than mis-tagging it as something it isn't.
  */
-function mapCashTransactionType(rawType: string): InvestmentTradeType | null {
+export function mapCashTransactionType(rawType: string): InvestmentTradeType | null {
   const t = rawType.toLowerCase();
   if (t.includes("dividend")) return "dividend";
   if (t.includes("interest")) return "interest";

@@ -7,7 +7,7 @@ function classificationForType(type: OurAccountType): AccountClassification {
   return LIABILITY_TYPES.includes(type) ? "liability" : "asset";
 }
 
-function mapAccountType(plaidType: PlaidAccountType, subtype: AccountSubtype | null): OurAccountType {
+export function mapAccountType(plaidType: PlaidAccountType, subtype: AccountSubtype | null): OurAccountType {
   switch (plaidType) {
     case PlaidAccountType.Depository:
       return subtype === AccountSubtype.Savings ? "savings" : "checking";
