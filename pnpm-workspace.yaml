@@ -22,6 +22,20 @@ overrides:
   # @google/genai) -- not exercised by this app's own server code. Two
   # advisories (array-limit bypass, isBuffer DoS) both close on this version.
   qs: "^6.16.0"
+  # vitest/@vitest/mocker: path-traversal advisory in the mocker's redirect
+  # handling. vitest is a test-runner devDependency only -- it never runs
+  # as part of `next build`/`next start`/the worker, so this has zero
+  # production exposure. 3->4 is a major bump, but no package in this repo
+  # has a vitest.config.* (every package.json just runs bare `vitest run`),
+  # so there's no config surface to break. Verified `pnpm test` still
+  # passes across every package after this override.
+  vitest: "^4.1.11"
+  "@vitest/mocker": "^4.1.11"
+  # js-yaml: pulled in transitively by eslint's own toolchain
+  # (eslint-config-next -> ... -> @eslint/eslintrc) -- lint-time only,
+  # never touches request-time code. Patch-level bump, no behavior change
+  # expected.
+  js-yaml: "^4.3.2"
 
 allowBuilds:
   '@google/genai': true
