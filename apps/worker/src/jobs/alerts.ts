@@ -1,12 +1,16 @@
 import { prisma, type AlertRule, type BudgetPeriod } from "@finance-app/db";
-import { getPeriodRange, countPeriodsUntil } from "@finance-app/finance-logic";
+import {
+  bucketLabelForSecurityType,
+  computeCurrentAllocation,
+  computePortfolioDrift,
+  countPeriodsUntil,
+  getPeriodRange,
+  latestHoldingsBySymbol,
+} from "@finance-app/finance-logic";
 
 /**
  * Sweeps every active AlertRule and evaluates the ones with a real signal to
- * check against. `portfolio_drift` is deliberately left unevaluated — it
- * needs InvestmentHolding/TargetAllocation data that Phase 3 (IBKR) hasn't
- * built yet, so there's nothing real to compare against; evaluating it
- * would mean fabricating a result, not implementing a feature.
+ * check against.
  */
 export async function evaluateAlertRulesForAllUsers(): Promise<void> {
   const rules = await prisma.alertRule.findMany({ where: { isActive: true } });
@@ -35,7 +39,7 @@ async function evaluateRule(rule: AlertRule): Promise<void> {
     case "sinking_fund_underfunded":
       return evaluateSinkingFundUnderfunded(rule);
     case "portfolio_drift":
-      return; // no investment-holdings data to evaluate against yet (Phase 3)
+      return evaluatePortfolioDrift(rule);
   }
 }
 
@@ -235,6 +239,48 @@ async function evaluateSinkingFundUnderfunded(rule: AlertRule): Promise<void> {
       });
     } else {
       await autoResolveOpen(rule.id, "sinking_fund", entityId);
+    }
+  }
+}
+
+/**
+ * portfolio_drift has no rule-level config -- the actual per-bucket target
+ * and drift threshold live on each TargetAllocation row, so this rule
+ * simply diffs "current holdings" against "every configured target" for
+ * the rule's user. No target rows configured means nothing to check yet.
+ */
+async function evaluatePortfolioDrift(rule: AlertRule): Promise<void> {
+  const targetRows = await prisma.targetAllocation.findMany({ where: { userId: rule.userId } });
+  if (targetRows.length === 0) return;
+
+  const holdings = await prisma.investmentHolding.findMany({
+    where: { account: { userId: rule.userId } },
+  });
+  const latest = latestHoldingsBySymbol(holdings);
+  const current = computeCurrentAllocation(
+    latest.map((h) => ({ bucketName: bucketLabelForSecurityType(h.securityType), marketValue: Number(h.marketValue) }))
+  );
+  const targets = targetRows.map((t) => ({
+    bucketName: t.bucketName,
+    targetWeightPct: Number(t.targetWeightPct),
+    driftThresholdPct: Number(t.driftThresholdPct),
+  }));
+  const drift = computePortfolioDrift(current, targets);
+
+  for (const d of drift) {
+    const entityId = `${rule.userId}:${d.bucketName}`;
+    if (d.isDrifted) {
+      await createAlertIfNotOpen({
+        userId: rule.userId,
+        alertRuleId: rule.id,
+        severity: "warning",
+        title: `${d.bucketName} has drifted from target`,
+        message: `${d.currentWeightPct.toFixed(1)}% current vs. ${d.targetWeightPct.toFixed(1)}% target (${d.driftThresholdPct.toFixed(1)}pp threshold).`,
+        relatedEntityType: "target_allocation",
+        relatedEntityId: entityId,
+      });
+    } else {
+      await autoResolveOpen(rule.id, "target_allocation", entityId);
     }
   }
 }

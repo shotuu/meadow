@@ -16,7 +16,7 @@ const RULE_TYPE_LABEL: Record<string, string> = {
   recurring_missed: "Recurring charge missed",
   recurring_amount_changed: "Recurring amount changed",
   sinking_fund_underfunded: "Sinking fund underfunded",
-  portfolio_drift: "Portfolio drift (not yet evaluated — needs Phase 3)",
+  portfolio_drift: "Portfolio drift",
 };
 
 const SEVERITY_VARIANT: Record<string, "default" | "destructive" | "secondary" | "outline"> = {

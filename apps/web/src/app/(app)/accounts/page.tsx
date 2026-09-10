@@ -1,5 +1,6 @@
 import { Wallet, CircleDollarSign } from "lucide-react";
 import { prisma, type AccountType } from "@finance-app/db";
+import { latestHoldingsBySymbol } from "@finance-app/finance-logic";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +17,7 @@ import { ACCOUNT_TYPE_ICON } from "@/lib/account-types";
 import { CompositionChart } from "@/components/composition-chart";
 import { EmptyState } from "@/components/empty-state";
 import { HoldingsSection } from "./holdings-section";
+import { TargetAllocationSection } from "./target-allocation-section";
 import { SyncNowButton } from "./sync-now-button";
 
 export default async function AccountsPage() {
@@ -64,14 +66,16 @@ export default async function AccountsPage() {
   const holdingCountByAccount = new Map<string, number>();
   const latestHoldings: {
     symbol: string;
+    securityType: string;
     quantity: number;
     avgCost: number | null;
     marketValue: number;
     currency: string;
   }[] = [];
   let portfolioHistory: { asOfDate: Date; value: number }[] = [];
+  let targetAllocations: { bucketName: string; targetWeightPct: number; driftThresholdPct: number }[] = [];
   if (ibkrAccountIds.length > 0) {
-    const [holdings, historyRows] = await Promise.all([
+    const [holdings, historyRows, targetAllocationRows] = await Promise.all([
       prisma.investmentHolding.findMany({
         where: { accountId: { in: ibkrAccountIds } },
       }),
@@ -81,18 +85,15 @@ export default async function AccountsPage() {
         _sum: { marketValue: true },
         orderBy: { asOfDate: "asc" },
       }),
+      prisma.targetAllocation.findMany({ where: { userId } }),
     ]);
-    const latestBySymbol = new Map<string, (typeof holdings)[number]>();
-    for (const h of holdings) {
-      const key = `${h.accountId}:${h.symbol}`;
-      const existing = latestBySymbol.get(key);
-      if (!existing || h.asOfDate > existing.asOfDate) latestBySymbol.set(key, h);
-    }
-    for (const h of latestBySymbol.values()) {
+    const latestBySymbol = latestHoldingsBySymbol(holdings);
+    for (const h of latestBySymbol) {
       balanceByAccount.set(h.accountId, (Number(balanceByAccount.get(h.accountId)) || 0) + Number(h.marketValue));
       holdingCountByAccount.set(h.accountId, (holdingCountByAccount.get(h.accountId) ?? 0) + 1);
       latestHoldings.push({
         symbol: h.symbol,
+        securityType: h.securityType,
         quantity: Number(h.quantity),
         avgCost: h.avgCost !== null ? Number(h.avgCost) : null,
         marketValue: Number(h.marketValue),
@@ -100,6 +101,11 @@ export default async function AccountsPage() {
       });
     }
     portfolioHistory = historyRows.map((r) => ({ asOfDate: r.asOfDate, value: Number(r._sum.marketValue ?? 0) }));
+    targetAllocations = targetAllocationRows.map((t) => ({
+      bucketName: t.bucketName,
+      targetWeightPct: Number(t.targetWeightPct),
+      driftThresholdPct: Number(t.driftThresholdPct),
+    }));
   }
 
   const ibkrCurrency = accounts.find((a) => a.syncSource === "ibkr_flex")?.currency ?? appUser.defaultCurrency;
@@ -146,6 +152,10 @@ export default async function AccountsPage() {
 
       {latestHoldings.length > 0 && (
         <HoldingsSection holdings={latestHoldings} history={portfolioHistory} currency={ibkrCurrency} />
+      )}
+
+      {latestHoldings.length > 0 && (
+        <TargetAllocationSection holdings={latestHoldings} targets={targetAllocations} />
       )}
 
       <AccountGroup

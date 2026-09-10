@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { TrendingUp } from "lucide-react";
 import { summarizeSpendByCategory } from "@finance-app/finance-logic";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -63,7 +64,11 @@ export function HoldingsSection({
           {sortedHoldings.map((h) => {
             const gainLoss = h.avgCost !== null ? h.marketValue - h.avgCost * h.quantity : null;
             return (
-              <div key={h.symbol} className="flex items-center justify-between px-4 py-3">
+              <Link
+                key={h.symbol}
+                href={`/accounts/holdings/${encodeURIComponent(h.symbol)}`}
+                className="flex items-center justify-between px-4 py-3 hover:bg-accent/50"
+              >
                 <div>
                   <p className="font-medium">{h.symbol}</p>
                   <p className="text-sm text-muted-foreground">
@@ -84,7 +89,7 @@ export function HoldingsSection({
                     </p>
                   )}
                 </div>
-              </div>
+              </Link>
             );
           })}
         </CardContent>

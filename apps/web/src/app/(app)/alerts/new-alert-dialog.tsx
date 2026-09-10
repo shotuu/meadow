@@ -29,6 +29,7 @@ const RULE_TYPES = [
   { value: "recurring_missed", label: "Recurring charge missed", needsCategory: false, needsAccount: false, valueLabel: null, valueDefault: "" },
   { value: "recurring_amount_changed", label: "Recurring amount changed", needsCategory: false, needsAccount: false, valueLabel: null, valueDefault: "" },
   { value: "sinking_fund_underfunded", label: "Sinking fund underfunded", needsCategory: true, needsAccount: false, valueLabel: "Warn when fewer than N months left", valueDefault: "1" },
+  { value: "portfolio_drift", label: "Portfolio drift", needsCategory: false, needsAccount: false, valueLabel: null, valueDefault: "" },
 ] as const;
 
 type Account = { id: string; name: string };

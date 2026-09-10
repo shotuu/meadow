@@ -4,3 +4,4 @@ export * from "./recurring";
 export * from "./currency";
 export * from "./spend";
 export * from "./prepaid";
+export * from "./allocation";

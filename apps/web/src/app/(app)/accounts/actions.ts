@@ -49,6 +49,38 @@ export async function archiveAccount(accountId: string) {
   revalidatePath("/accounts");
 }
 
+export async function setTargetAllocation(formData: FormData) {
+  const userId = await requireUserId();
+
+  const bucketName = String(formData.get("bucketName") || "").trim();
+  const targetWeightPct = Number(formData.get("targetWeightPct"));
+  const driftThresholdPct = Number(formData.get("driftThresholdPct"));
+
+  if (!bucketName) throw new Error("Bucket name is required");
+  if (!Number.isFinite(targetWeightPct) || targetWeightPct < 0 || targetWeightPct > 100) {
+    throw new Error("Target weight must be between 0 and 100");
+  }
+  if (!Number.isFinite(driftThresholdPct) || driftThresholdPct <= 0) {
+    throw new Error("Drift threshold must be a positive number");
+  }
+
+  await prisma.targetAllocation.upsert({
+    where: { userId_bucketName: { userId, bucketName } },
+    create: { userId, bucketName, targetWeightPct, driftThresholdPct },
+    update: { targetWeightPct, driftThresholdPct },
+  });
+
+  revalidatePath("/accounts");
+}
+
+export async function deleteTargetAllocation(bucketName: string) {
+  const userId = await requireUserId();
+
+  await prisma.targetAllocation.deleteMany({ where: { userId, bucketName } });
+
+  revalidatePath("/accounts");
+}
+
 export async function unarchiveAccount(accountId: string) {
   const userId = await requireUserId();
 
