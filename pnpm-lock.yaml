@@ -8,7 +8,6 @@ overrides:
   deepmerge-ts: ^8.0.2
   mysql2: ^3.24.3
   qs: ^6.16.0
-  vitest: ^4.1.11
   '@vitest/mocker': ^4.1.11
   js-yaml: ^4.3.2
 
