@@ -1,11 +1,23 @@
 import { withAdvisoryLock, prisma, type InvestmentTradeType } from "@finance-app/db";
 import { decryptSecret } from "@finance-app/crypto";
 import { fetchFlexStatement } from "./client";
-import { asArray, parseIbkrDate, parseIbkrDateTime } from "./parse";
+import { asArray, parseIbkrDate, parseIbkrDateTime, parseCashReportRows } from "./parse";
 
 export interface SyncResult {
   holdings: number;
   transactions: number;
+}
+
+/**
+ * Synthetic per-currency symbol for a Cash Report row, stored alongside
+ * real positions in InvestmentHolding rather than a separate model -- a
+ * cash balance is valued and displayed exactly like a holding (current
+ * amount, no cost basis), so it rides the existing balance/allocation/
+ * history machinery for free. ":" can't collide with a real IBKR ticker,
+ * which never contains one.
+ */
+export function cashSymbolFor(currency: string): string {
+  return `CASH:${currency}`;
 }
 
 /**
@@ -64,9 +76,13 @@ async function syncUnlocked(configId: string): Promise<SyncResult> {
         throw new Error("Flex Query positions must all belong to the ending report date");
       }
     }
+    const cashRows = parseCashReportRows(statement.CashReport);
+    const cashSymbols = cashRows.map((r) => cashSymbolFor(r.currency));
+
     const previous = await db.investmentHolding.findMany({ where: { accountId: config.accountId }, orderBy: { asOfDate: "desc" }, distinct: ["symbol"] });
+    const currentSymbols = new Set([...symbols, ...cashSymbols]);
     for (const old of previous) {
-      if (symbols.has(old.symbol)) continue;
+      if (currentSymbols.has(old.symbol)) continue;
       const key = { accountId: config.accountId, symbol: old.symbol, asOfDate: reportDate };
       await db.investmentHolding.upsert({ where: { accountId_symbol_asOfDate: key },
         create: { ...key, securityType: old.securityType, currency: old.currency, quantity: 0, marketValue: 0 },
@@ -102,6 +118,29 @@ async function syncUnlocked(configId: string): Promise<SyncResult> {
           avgCost: pos["@_costBasisPrice"] ? Number(pos["@_costBasisPrice"]) : null,
           ...shared,
         },
+      });
+
+      await db.investmentHoldingHistory.upsert({
+        where: { accountId_symbol_asOfDate: { accountId: config.accountId, symbol, asOfDate } },
+        create: { accountId: config.accountId, symbol, asOfDate, ...shared },
+        update: shared,
+      });
+
+      result.holdings++;
+    }
+
+    for (const row of cashRows) {
+      const symbol = cashSymbolFor(row.currency);
+      const asOfDate = reportDate;
+      // No unit-price concept for cash -- quantity and marketValue are both
+      // just the currency amount, which also keeps the "quantity !== 0"
+      // exited-position filter used throughout the app correct for free.
+      const shared = { quantity: row.endingCash, marketValue: row.endingCash };
+
+      await db.investmentHolding.upsert({
+        where: { accountId_symbol_asOfDate: { accountId: config.accountId, symbol, asOfDate } },
+        create: { accountId: config.accountId, symbol, securityType: "CASH", currency: row.currency, avgCost: null, asOfDate, ...shared },
+        update: { securityType: "CASH", currency: row.currency, avgCost: null, ...shared },
       });
 
       await db.investmentHoldingHistory.upsert({

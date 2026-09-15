@@ -38,7 +38,7 @@ export function HoldingsSection({
   return (
     <div className="space-y-3">
       <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Holdings</h2>
-      <p className="text-sm text-muted-foreground">Position values exclude brokerage cash. Totals are shown in {currency}.</p>
+      <p className="text-sm text-muted-foreground">Includes brokerage cash. Totals are shown in {currency}.</p>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Card>
@@ -80,14 +80,16 @@ export function HoldingsSection({
               >
                 <div>
                   <div className="flex items-center gap-2">
-                    <p className="font-medium">{h.symbol}</p>
+                    <p className="font-medium">{h.securityType === "CASH" ? h.currency : h.symbol}</p>
                     <Badge variant={isUserAssigned ? "secondary" : "outline"} className="text-xs">
                       {bucketName}
                     </Badge>
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    {h.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })} shares
-                  </p>
+                  {h.securityType !== "CASH" && (
+                    <p className="text-sm text-muted-foreground">
+                      {h.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })} shares
+                    </p>
+                  )}
                 </div>
                 <div className="text-right">
                   <p className="font-amount font-semibold">{formatMoney(h.marketValue, h.currency)}</p>

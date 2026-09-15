@@ -111,9 +111,6 @@ export default async function AccountsPage() {
         </div>
       </div>
 
-      {ibkrAccountIds.length > 0 && (
-        <p className="text-sm text-muted-foreground">Brokerage balances include positions only; brokerage cash is not yet imported.</p>
-      )}
       {byCurrency.size > 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
           {[...byCurrency.entries()].map(([currency, totals]) => (

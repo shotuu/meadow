@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asArray, parseIbkrDate, parseIbkrDateTime } from "../parse";
+import { asArray, parseIbkrDate, parseIbkrDateTime, parseCashReportRows } from "../parse";
 
 describe("asArray", () => {
   it("returns an empty array for null or undefined", () => {
@@ -39,5 +39,40 @@ describe("parseIbkrDateTime", () => {
 describe("invalid report dates", () => {
   it.each(["20260231", "20261301", "undefined", "2026011"])("rejects %s", (date) => {
     expect(() => parseIbkrDate(date)).toThrow("Invalid IBKR date");
+  });
+});
+
+describe("parseCashReportRows", () => {
+  it("returns [] when the Cash Report section is absent (not enabled on the Flex Query)", () => {
+    expect(parseCashReportRows(undefined)).toEqual([]);
+  });
+
+  it("parses a single-currency row (fast-xml-parser's single-occurrence footgun) and a multi-currency array the same way", () => {
+    // Real shape observed from a live Flex Query with Currency Breakout on
+    // and Base Currency Summary off: no BASE_SUMMARY aggregate row.
+    const single = parseCashReportRows({
+      CashReportCurrency: { "@_accountId": "U13508599", "@_currency": "SGD", "@_endingCash": "156.1385146" },
+    });
+    expect(single).toEqual([{ currency: "SGD", endingCash: 156.1385146 }]);
+
+    const multi = parseCashReportRows({
+      CashReportCurrency: [
+        { "@_accountId": "U13508599", "@_currency": "SGD", "@_endingCash": "156.1385146" },
+        { "@_accountId": "U13508599", "@_currency": "USD", "@_endingCash": "0.734351999" },
+      ],
+    });
+    expect(multi).toEqual([
+      { currency: "SGD", endingCash: 156.1385146 },
+      { currency: "USD", endingCash: 0.734351999 },
+    ]);
+  });
+
+  it("rejects a row missing currency or with a non-finite ending cash", () => {
+    expect(() => parseCashReportRows({ CashReportCurrency: { "@_endingCash": "100" } })).toThrow(
+      "Invalid IBKR cash report row"
+    );
+    expect(() =>
+      parseCashReportRows({ CashReportCurrency: { "@_currency": "USD", "@_endingCash": "not-a-number" } })
+    ).toThrow("Invalid IBKR cash report row");
   });
 });

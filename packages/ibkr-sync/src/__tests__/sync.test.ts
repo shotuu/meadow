@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapCashTransactionType } from "../sync";
+import { mapCashTransactionType, cashSymbolFor } from "../sync";
 
 describe("mapCashTransactionType", () => {
   it("recognizes dividend regardless of case", () => {
@@ -19,5 +19,12 @@ describe("mapCashTransactionType", () => {
 
   it("returns null for an unrecognized type rather than mis-tagging it", () => {
     expect(mapCashTransactionType("Deposits/Withdrawals")).toBeNull();
+  });
+});
+
+describe("cashSymbolFor", () => {
+  it("builds a deterministic per-currency symbol that can't collide with a real IBKR ticker", () => {
+    expect(cashSymbolFor("USD")).toBe("CASH:USD");
+    expect(cashSymbolFor("SGD")).toBe("CASH:SGD");
   });
 });

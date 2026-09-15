@@ -57,7 +57,7 @@ export default async function HoldingDetailPage({ params }: { params: Promise<{ 
           <Link href="/accounts" className="text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeft className="size-4" />
           </Link>
-          <h1 className="text-2xl font-semibold">{symbol}</h1>
+          <h1 className="text-2xl font-semibold">{securityType === "CASH" ? currentHoldings[0]?.currency ?? symbol : symbol}</h1>
           <Badge variant={bucketAssignment ? "secondary" : "outline"}>{resolvedBucketName}</Badge>
         </div>
         {securityType && (
@@ -79,10 +79,12 @@ export default async function HoldingDetailPage({ params }: { params: Promise<{ 
             <CardHeader className="flex items-center justify-between space-y-0">
               <div>
                 <CardTitle className="text-base">{accountNames.get(h.accountId)}</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  {Number(h.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })} shares
-                  {h.avgCost !== null && ` · avg cost ${formatMoney(h.avgCost, h.currency)}`}
-                </p>
+                {h.securityType !== "CASH" && (
+                  <p className="text-sm text-muted-foreground">
+                    {Number(h.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })} shares
+                    {h.avgCost !== null && ` · avg cost ${formatMoney(h.avgCost, h.currency)}`}
+                  </p>
+                )}
               </div>
               <div className="text-right">
                 <p className="font-amount text-lg font-semibold">{formatMoney(h.marketValue, h.currency)}</p>
