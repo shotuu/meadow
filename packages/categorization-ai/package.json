@@ -7,7 +7,7 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@finance-app/db": "workspace:*",
-    "@google/genai": "^2.19.0"
+    "@google/genai": "^2.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
