@@ -258,7 +258,7 @@ integration("architecture regressions against PostgreSQL", () => {
     const olderTx = await db.transaction.create({ data: { userId: state.userId, accountId, categoryId, amount: -56.78, currency: "USD", date: olderDate, description: "Old purchase" } });
 
     const { buildAiFinancialContextExport } = await import("../ai-export/build-export");
-    const result = await buildAiFinancialContextExport();
+    const result = await buildAiFinancialContextExport("standard");
     const serialized = JSON.stringify(result);
 
     expect(() => JSON.parse(serialized)).not.toThrow();
@@ -271,6 +271,55 @@ integration("architecture regressions against PostgreSQL", () => {
     expect(result.transactions.recent.some((t) => t.description === "Old purchase")).toBe(false);
     const olderSummary = result.transactions.olderMonthlySummaries.find((s) => s.month === olderDate.toISOString().slice(0, 7) && s.categoryPath === "Food");
     expect(olderSummary?.totalsByCurrency.USD).toBe("-56.78");
+
+    // No CashReserve/Obligation rows exist for this user -- must report
+    // unknown, never a confident-looking number (the highest-priority fix
+    // in the v2 export revision).
+    expect(result.cashPolicy.calculationComplete).toBe(false);
+    expect(result.cashPolicy.investableCashByCurrency.USD).toBeNull();
+    expect(result.cashPolicy.uncommittedCashByCurrency.USD).toBeNull();
+    expect(result.cashPolicy.notes.USD).toBeTruthy();
+    expect(typeof result.cashPolicy.cashByCurrency.USD).toBe("number");
+  });
+
+  it("computes cash policy once configured, and flags a same-account refund pair with confidence", async () => {
+    await db.cashReserve.create({ data: { userId: state.userId, name: "Emergency fund", currency: "USD", targetAmount: 200, minimumAmount: 100 } });
+
+    const chargeDate = new Date(); chargeDate.setDate(chargeDate.getDate() - 10);
+    const refundDate = new Date(); refundDate.setDate(refundDate.getDate() - 8);
+    await db.transaction.create({ data: { userId: state.userId, accountId, amount: -40, currency: "USD", date: chargeDate, description: "Store purchase" } });
+    await db.transaction.create({ data: { userId: state.userId, accountId, amount: 40, currency: "USD", date: refundDate, description: "Store refund" } });
+
+    const { buildAiFinancialContextExport } = await import("../ai-export/build-export");
+    const result = await buildAiFinancialContextExport("standard");
+
+    expect(result.cashPolicy.calculationComplete).toBe(true);
+    expect(result.cashPolicy.investableCashByCurrency.USD).not.toBeNull();
+
+    const charge = result.transactions.recent.find((t) => t.description === "Store purchase");
+    const refund = result.transactions.recent.find((t) => t.description === "Store refund");
+    expect(charge?.isReversal).toBe(true);
+    expect(refund?.isRefund).toBe(true);
+    expect(charge?.relationshipConfidence).toBeGreaterThan(0);
+    expect(refund?.linkedTransactionDate).toBe(chargeDate.toISOString().slice(0, 10));
+  });
+
+  it("redacts reference numbers and omits notes in privacy_safe mode, but keeps them in standard mode", async () => {
+    const txDate = new Date();
+    await db.transaction.create({
+      data: { userId: state.userId, accountId, amount: -25, currency: "USD", date: txDate, description: "UCLA PAYROLL DEP 000482910334", notes: "personal note" },
+    });
+
+    const { buildAiFinancialContextExport } = await import("../ai-export/build-export");
+    const safe = await buildAiFinancialContextExport("privacy_safe");
+    const full = await buildAiFinancialContextExport("standard");
+
+    const safeTx = safe.transactions.recent.find((t) => t.description.startsWith("UCLA PAYROLL"));
+    const fullTx = full.transactions.recent.find((t) => t.description.startsWith("UCLA PAYROLL"));
+    expect(safeTx?.description).toBe("UCLA PAYROLL DEP [redacted]");
+    expect(safeTx?.notes).toBeNull();
+    expect(fullTx?.description).toBe("UCLA PAYROLL DEP 000482910334");
+    expect(fullTx?.notes).toBe("personal note");
   });
 
 });

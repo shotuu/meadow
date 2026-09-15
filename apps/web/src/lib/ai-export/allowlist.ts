@@ -93,6 +93,24 @@ export const CASH_RESERVE_SELECT = {
   account: { select: { name: true, institutionName: true } },
 } as const;
 
+export const SINKING_FUND_SELECT = {
+  name: true,
+  currency: true,
+  targetAmount: true,
+  currentBalance: true,
+  deadlineDate: true,
+  recurrence: true,
+  category: { select: { name: true, parentCategory: { select: { name: true } } } },
+} as const;
+
+export const PREPAID_COVERAGE_SELECT = {
+  coverageMonths: true,
+  // category.id is selected only so computePrepaidCoverageProgress (which
+  // needs a categoryId) can be called -- build-export.ts never puts it in
+  // the output, only categoryPath.
+  category: { select: { id: true, name: true, parentCategory: { select: { name: true } } } },
+} as const;
+
 /** "Housing > Rent", or null for an uncategorized row. */
 export function buildCategoryPath(category: { name: string; parentCategory: { name: string } | null } | null): string | null {
   if (!category) return null;

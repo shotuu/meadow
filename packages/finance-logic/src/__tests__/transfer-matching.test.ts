@@ -123,6 +123,26 @@ describe("matchTransfers", () => {
     expect(matchTransfers([])).toEqual([]);
     expect(matchTransfers([event({ id: "solo", amount: -100 })])).toEqual([]);
   });
+
+  describe("sameAccount option", () => {
+    it("matches a same-account opposite-sign pair (e.g. a refund) when sameAccount is true", () => {
+      const events = [
+        event({ id: "charge", accountId: "card", amount: -50, date: new Date("2026-09-01") }),
+        event({ id: "refund", accountId: "card", amount: 50, date: new Date("2026-09-02") }),
+      ];
+      const result = matchTransfers(events, { sameAccount: true });
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ aId: "charge", bId: "refund" });
+    });
+
+    it("excludes a different-account pair when sameAccount is true", () => {
+      const events = [
+        event({ id: "out", accountId: "bofa", amount: -100, date: new Date("2026-09-01") }),
+        event({ id: "in", accountId: "card", amount: 100, date: new Date("2026-09-01") }),
+      ];
+      expect(matchTransfers(events, { sameAccount: true })).toHaveLength(0);
+    });
+  });
 });
 
 describe("findPossibleCrossCurrencyTransfers", () => {

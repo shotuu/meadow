@@ -21,6 +21,14 @@ export interface MatchTransfersOptions {
   eligiblePair?: (a: MoneyMovementEvent, b: MoneyMovementEvent) => boolean;
   /** Minimum confidence required to accept a pair at all. */
   minConfidence?: number;
+  /**
+   * Defaults to false: a transfer moves money between two of the user's
+   * DIFFERENT accounts. Set true to instead require the SAME account --
+   * a different question (e.g. a same-account reversal/refund pair),
+   * reusing the identical amount/date scoring rather than a second
+   * algorithm.
+   */
+  sameAccount?: boolean;
 }
 
 const DEFAULT_MAX_DATE_DISTANCE_DAYS = 5;
@@ -56,6 +64,7 @@ export function matchTransfers(
 ): TransferMatchResult[] {
   const maxDateDistanceDays = options?.maxDateDistanceDays ?? DEFAULT_MAX_DATE_DISTANCE_DAYS;
   const minConfidence = options?.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+  const sameAccount = options?.sameAccount ?? false;
 
   const candidates: TransferMatchResult[] = [];
 
@@ -65,7 +74,7 @@ export function matchTransfers(
       const b = events[j];
 
       if (options?.eligiblePair && !options.eligiblePair(a, b)) continue;
-      if (a.accountId === b.accountId) continue;
+      if (sameAccount ? a.accountId !== b.accountId : a.accountId === b.accountId) continue;
       if (a.currency !== b.currency) continue;
       if (a.amount === 0 || b.amount === 0) continue;
       // Opposite signs: one outflow, one inflow.
