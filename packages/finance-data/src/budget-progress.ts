@@ -1,4 +1,4 @@
-import { prisma, type Budget, type Category } from "@finance-app/db";
+import { prisma, Prisma, type Budget, type Category } from "@finance-app/db";
 import { getPeriodRange, buildPeriodChain, MAX_ROLLOVER_LOOKBACK_PERIODS, computeSafeToSpendPerDay, computePrepaidCoverageStatus, type PeriodActuals, type PrepaidCoverageStatus } from "@finance-app/finance-logic";
 import { readUsdRates, requireConversion } from "./fx";
 
@@ -7,14 +7,20 @@ export interface RecurringBudgetProgress {
   safePerDay: number; progressValue: number; periods?: PeriodActuals[];
 }
 
-/** Spend is valued on its transaction day. Each allowance uses its effective version. */
+/**
+ * Spend is valued on its transaction day. Each allowance uses its
+ * effective version. Accepts an optional transaction client so a caller
+ * assembling several reads (e.g. an export) can run them all against one
+ * consistent database snapshot instead of the default singleton.
+ */
 export async function computeRecurringBudgetProgress(
   userId: string, category: Pick<Category, "id" | "budgetType">,
   budget: Pick<Budget, "amount" | "currency" | "period" | "rolloverCap" | "effectiveFrom">,
-  now: Date
+  now: Date,
+  client: Prisma.TransactionClient = prisma
 ): Promise<RecurringBudgetProgress> {
   const rollover = category.budgetType === "rollover_envelope";
-  const versions = rollover ? await prisma.budget.findMany({
+  const versions = rollover ? await client.budget.findMany({
     where: { userId, categoryId: category.id, effectiveFrom: { lte: now } }, orderBy: { effectiveFrom: "asc" },
   }) : [];
   const range = getPeriodRange(budget.period, now);
@@ -27,7 +33,7 @@ export async function computeRecurringBudgetProgress(
   if (versions.some((v) => v.period !== budget.period || v.currency !== budget.currency)) {
     throw new Error("Rollover history requires a consistent period and currency");
   }
-  const transactions = await prisma.transaction.findMany({
+  const transactions = await client.transaction.findMany({
     where: { userId, categoryId: category.id, isTransfer: false, pending: false, date: { gte: first, lt: range.end } },
     select: { date: true, amount: true, currency: true },
   });
@@ -35,7 +41,7 @@ export async function computeRecurringBudgetProgress(
   const converted = await Promise.all(transactions.map(async (t) => {
     const day = t.date.toISOString().slice(0, 10);
     if (t.currency === budget.currency) return { ...t, spent: -Number(t.amount) };
-    if (!rateCache.has(day)) rateCache.set(day, readUsdRates(t.date));
+    if (!rateCache.has(day)) rateCache.set(day, readUsdRates(t.date, client));
     return { ...t, spent: -requireConversion(Number(t.amount), t.currency, budget.currency, await rateCache.get(day)!) };
   }));
   let carry = 0, remaining = 0, spent = 0, rolledOverAmount = 0, available = 0;
@@ -66,9 +72,10 @@ export async function computePrepaidCoverageProgress(
   userId: string,
   categoryId: string,
   coverageMonths: number,
-  now: Date
+  now: Date,
+  client: Prisma.TransactionClient = prisma
 ): Promise<PrepaidCoverageStatus> {
-  const lastPayment = await prisma.transaction.findFirst({
+  const lastPayment = await client.transaction.findFirst({
     where: { userId, categoryId, isTransfer: false, amount: { lt: 0 } },
     orderBy: { date: "desc" },
     select: { date: true, amount: true },

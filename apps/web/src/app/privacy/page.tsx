@@ -1,4 +1,4 @@
-const LAST_UPDATED = "August 28, 2026";
+const LAST_UPDATED = "September 15, 2026";
 
 export default function PrivacyPage() {
   return (
@@ -43,6 +43,14 @@ export default function PrivacyPage() {
           transactions, computing budgets and net worth, and detecting recurring charges. Data is
           never sold, and never shared with any third party beyond what&apos;s required to provide
           the service itself (Plaid, for bank connections; Google, for sign-in).
+        </p>
+        <p>
+          Settings also offers an &quot;AI Financial Context&quot; export: a JSON file, generated
+          only when you ask for it, that you download to your own device. You may choose to share
+          that file with an AI assistant of your own choosing for financial advice — that sharing
+          is something you do, not something Meadow does. The file is never transmitted anywhere
+          by Meadow itself, and never includes account numbers, bank login credentials, encrypted
+          access tokens, or other internal app identifiers.
         </p>
       </section>
 

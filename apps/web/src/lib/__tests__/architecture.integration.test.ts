@@ -243,4 +243,34 @@ integration("architecture regressions against PostgreSQL", () => {
     expect(await db.finverseConnection.count({ where: { userId: state.userId } })).toBe(0);
   });
 
+  it("never leaks provider credentials or internal ids, and buckets recent vs. older transactions correctly", async () => {
+    const fakeAccessToken = `plaid-secret-${randomUUID()}`;
+    const plaidItem = await db.plaidItem.create({
+      data: { userId: state.userId, plaidItemId: randomUUID(), accessToken: fakeAccessToken, institutionName: "Test Bank" },
+    });
+    await db.budget.create({ data: { userId: state.userId, categoryId, amount: 100, currency: "USD", period: "monthly", effectiveFrom: new Date("2026-09-01") } });
+    await db.accountBalanceSnapshot.create({
+      data: { userId: state.userId, accountId, asOfDate: new Date(), balance: 500, currency: "USD", method: "transaction_sum" },
+    });
+    const recentDate = new Date(); recentDate.setDate(recentDate.getDate() - 30);
+    const olderDate = new Date(); olderDate.setDate(olderDate.getDate() - 400);
+    const recentTx = await db.transaction.create({ data: { userId: state.userId, accountId, categoryId, amount: -12.34, currency: "USD", date: recentDate, description: "Recent purchase" } });
+    const olderTx = await db.transaction.create({ data: { userId: state.userId, accountId, categoryId, amount: -56.78, currency: "USD", date: olderDate, description: "Old purchase" } });
+
+    const { buildAiFinancialContextExport } = await import("../ai-export/build-export");
+    const result = await buildAiFinancialContextExport();
+    const serialized = JSON.stringify(result);
+
+    expect(() => JSON.parse(serialized)).not.toThrow();
+    expect(serialized).not.toContain(fakeAccessToken);
+    for (const leakedId of [state.userId, accountId, categoryId, recentTx.id, olderTx.id, plaidItem.id]) {
+      expect(serialized).not.toContain(leakedId);
+    }
+
+    expect(result.transactions.recent.some((t) => t.description === "Recent purchase")).toBe(true);
+    expect(result.transactions.recent.some((t) => t.description === "Old purchase")).toBe(false);
+    const olderSummary = result.transactions.olderMonthlySummaries.find((s) => s.month === olderDate.toISOString().slice(0, 7) && s.categoryPath === "Food");
+    expect(olderSummary?.totalsByCurrency.USD).toBe("-56.78");
+  });
+
 });

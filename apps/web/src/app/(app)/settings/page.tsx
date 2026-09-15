@@ -1,9 +1,10 @@
-import { User, Trash2, Palette } from "lucide-react";
+import { User, Trash2, Palette, Download } from "lucide-react";
 import { prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { DangerZone } from "./danger-zone";
+import { ExportContextDialog } from "./export-context-dialog";
 
 export default async function SettingsPage() {
   const userId = await requireUserId();
@@ -53,6 +54,27 @@ export default async function SettingsPage() {
         <CardContent className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">Theme</p>
           <ThemeToggle />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Download className="size-4 text-muted-foreground" />
+            AI Financial Context export
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Download a JSON snapshot of your financial picture to share with an AI assistant of
+            your choosing for advice — recent transactions plus longer-term summaries, budgets,
+            recurring charges, holdings, and planning data. See{" "}
+            <a href="/privacy" className="underline underline-offset-2">
+              the privacy policy
+            </a>{" "}
+            for what this does and doesn&apos;t include.
+          </p>
+          <ExportContextDialog />
         </CardContent>
       </Card>
 

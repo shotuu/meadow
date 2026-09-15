@@ -1,26 +1,31 @@
-import { prisma, type FinancialAccount } from "@finance-app/db";
+import { prisma, Prisma, type FinancialAccount } from "@finance-app/db";
 import { computeAccountBalance, convertCurrency } from "@finance-app/finance-logic";
 import { readUsdRates, requireConversion } from "./fx";
 
-/** One complete report per account, including zero-position closing reports. */
-export async function readCurrentHoldings(userId: string, accountIds?: string[]) {
-  const dates = await prisma.investmentHolding.groupBy({
+/**
+ * One complete report per account, including zero-position closing
+ * reports. Accepts an optional transaction client so a caller assembling
+ * several reads (e.g. an export) can run them all against one consistent
+ * database snapshot instead of the default singleton.
+ */
+export async function readCurrentHoldings(userId: string, accountIds?: string[], client: Prisma.TransactionClient = prisma) {
+  const dates = await client.investmentHolding.groupBy({
     by: ["accountId"], where: { account: { userId, isArchived: false }, ...(accountIds ? { accountId: { in: accountIds } } : {}) },
     _max: { asOfDate: true },
   });
-  return prisma.investmentHolding.findMany({ where: {
+  return client.investmentHolding.findMany({ where: {
     account: { userId, isArchived: false },
     OR: dates.flatMap((d) => d._max.asOfDate ? [{ accountId: d.accountId, asOfDate: d._max.asOfDate }] : []),
   } });
 }
 
-export async function readAccountBalances(userId: string, suppliedAccounts?: FinancialAccount[]) {
-  const accounts = suppliedAccounts ?? await prisma.financialAccount.findMany({ where: { userId, isArchived: false } });
+export async function readAccountBalances(userId: string, suppliedAccounts?: FinancialAccount[], client: Prisma.TransactionClient = prisma) {
+  const accounts = suppliedAccounts ?? await client.financialAccount.findMany({ where: { userId, isArchived: false } });
   if (accounts.some((a) => a.userId !== userId)) throw new Error("Account ownership mismatch");
   const ids = accounts.map((a) => a.id);
   const [sums, holdings, rates] = await Promise.all([
-    prisma.transaction.groupBy({ by: ["accountId", "currency"], where: { userId, accountId: { in: ids } }, _sum: { amount: true } }),
-    readCurrentHoldings(userId, ids), readUsdRates(),
+    client.transaction.groupBy({ by: ["accountId", "currency"], where: { userId, accountId: { in: ids } }, _sum: { amount: true } }),
+    readCurrentHoldings(userId, ids, client), readUsdRates(undefined, client),
   ]);
   // A single account whose currency has no FX rate must not take down every
   // other account's (correctly computable) balance in this same batch, so
@@ -60,9 +65,14 @@ export async function readAccountBalances(userId: string, suppliedAccounts?: Fin
   }));
 }
 
-/** Value each day's latest complete account report in a single reporting currency. */
-export async function readPortfolioHistory(userId: string, currency: string, accountIds?: string[], symbol?: string) {
-  const rows = await prisma.investmentHolding.findMany({
+/**
+ * Values each day's latest complete account report in a single reporting
+ * currency. Accepts an optional transaction client so a caller assembling
+ * several reads (e.g. an export) can run them all against one consistent
+ * database snapshot instead of the default singleton.
+ */
+export async function readPortfolioHistory(userId: string, currency: string, accountIds?: string[], symbol?: string, client: Prisma.TransactionClient = prisma) {
+  const rows = await client.investmentHolding.findMany({
     where: { account: { userId, isArchived: false }, ...(accountIds ? { accountId: { in: accountIds } } : {}) },
     orderBy: { asOfDate: "asc" },
   });
@@ -79,7 +89,7 @@ export async function readPortfolioHistory(userId: string, currency: string, acc
       latestByAccount.set(id, dailyRows.filter((r) => r.accountId === id));
     }
     const asOfDate = new Date(day);
-    const rates = await readUsdRates(asOfDate);
+    const rates = await readUsdRates(asOfDate, client);
     const converted = [...latestByAccount.values()].flat().filter((r) => !symbol || r.symbol === symbol)
       .map((r) => convertCurrency(Number(r.marketValue), r.currency, currency, rates));
     const value = converted.some((v) => v === null) ? null : converted.reduce<number>((sum, v) => sum + v!, 0);
