@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { TrendingUp } from "lucide-react";
-import { resolveBucketName, summarizeSpendByCategory } from "@finance-app/finance-logic";
+import {
+  classifyInstrumentType,
+  instrumentTypeLabel,
+  resolveStrategyBucketName,
+  summarizeSpendByCategory,
+  type InstrumentType,
+} from "@finance-app/finance-logic";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -12,6 +18,7 @@ type Holding = {
   accountId: string;
   symbol: string;
   securityType: string;
+  ibkrSubCategory: string | null;
   quantity: number;
   avgCost: number | null;
   marketValue: number;
@@ -23,13 +30,16 @@ export function HoldingsSection({
   history,
   currency,
   bucketAssignments,
+  instrumentTypeOverrides,
 }: {
   holdings: Holding[];
   history: { asOfDate: Date; value: number | null }[];
   currency: string;
   bucketAssignments: { symbol: string; bucketName: string }[];
+  instrumentTypeOverrides: { symbol: string; instrumentType: string }[];
 }) {
   const overridesBySymbol = new Map(bucketAssignments.map((a) => [a.symbol, a.bucketName]));
+  const instrumentOverridesBySymbol = new Map(instrumentTypeOverrides.map((o) => [o.symbol, o.instrumentType as InstrumentType]));
   const allocation = summarizeSpendByCategory(
     holdings.map((h) => ({ categoryId: h.symbol, categoryName: h.symbol, amount: h.marketValue }))
   );
@@ -71,7 +81,12 @@ export function HoldingsSection({
           {sortedHoldings.map((h) => {
             const gainLoss = h.avgCost !== null ? h.marketValue - h.avgCost * h.quantity : null;
             const isUserAssigned = overridesBySymbol.has(h.symbol);
-            const bucketName = resolveBucketName(h.symbol, h.securityType, overridesBySymbol);
+            const strategyBucketName = resolveStrategyBucketName(h.symbol, overridesBySymbol);
+            const classification = classifyInstrumentType({
+              ibkrAssetCategory: h.securityType,
+              ibkrSubCategory: h.ibkrSubCategory,
+              manualOverride: instrumentOverridesBySymbol.get(h.symbol) ?? null,
+            });
             return (
               <Link
                 key={`${h.accountId}:${h.symbol}`}
@@ -81,8 +96,11 @@ export function HoldingsSection({
                 <div>
                   <div className="flex items-center gap-2">
                     <p className="font-medium">{h.securityType === "CASH" ? h.currency : h.symbol}</p>
+                    <Badge variant="outline" className="text-xs">
+                      {instrumentTypeLabel(classification.instrumentType)}
+                    </Badge>
                     <Badge variant={isUserAssigned ? "secondary" : "outline"} className="text-xs">
-                      {bucketName}
+                      {strategyBucketName}
                     </Badge>
                   </div>
                   {h.securityType !== "CASH" && (

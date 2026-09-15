@@ -5,6 +5,7 @@ export * from "./currency";
 export * from "./spend";
 export * from "./prepaid";
 export * from "./allocation";
+export * from "./instrument-classification";
 export * from "./balance";
 export * from "./transfer-matching";
 export * from "./obligations";

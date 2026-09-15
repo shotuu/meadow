@@ -1,29 +1,3 @@
-const SECURITY_TYPE_LABELS: Record<string, string> = {
-  STK: "Stocks",
-  BOND: "Bonds",
-  CASH: "Cash",
-  OPT: "Options",
-  FOP: "Futures Options",
-  FUND: "Funds",
-  FUT: "Futures",
-  CFD: "CFDs",
-  CMDTY: "Commodities",
-  WAR: "Warrants",
-  CRYPTO: "Crypto",
-};
-
-/**
- * Maps IBKR's raw Flex Query asset-category codes (STK/BOND/CASH/...) to a
- * human label. Degrades to a title-cased version of the raw code for
- * anything not in the table, rather than throwing on a category IBKR added
- * that we don't know about yet.
- */
-export function bucketLabelForSecurityType(securityType: string): string {
-  const known = SECURITY_TYPE_LABELS[securityType.toUpperCase()];
-  if (known) return known;
-  return securityType.charAt(0).toUpperCase() + securityType.slice(1).toLowerCase();
-}
-
 export interface BucketHolding {
   bucketName: string;
   marketValue: number;
@@ -95,18 +69,17 @@ export function computePortfolioDrift(
 }
 
 /**
- * Resolves the allocation bucket for one holding: prefers the user's own
- * HoldingBucketAssignment for that symbol (e.g. "core"/"satellite"/"gold")
- * when one exists, otherwise falls back to the security-type-derived label.
- * `overridesBySymbol` should be built from the user's HoldingBucketAssignment
- * rows (symbol -> bucketName).
+ * Resolves the STRATEGY allocation bucket for one holding: the user's own
+ * HoldingBucketAssignment for that symbol (e.g. "Core"/"Satellite"/"Cash"),
+ * or "Unclassified" when none exists. Deliberately never falls back to an
+ * instrument-type label (that was the old, single-axis design) -- strategy
+ * is a portfolio-policy decision only the user makes, never inferred from
+ * what a security IS. See classifyInstrumentType in instrument-classification.ts
+ * for the separate instrument-type axis. `overridesBySymbol` should be built
+ * from the user's HoldingBucketAssignment rows (symbol -> bucketName).
  */
-export function resolveBucketName(
-  symbol: string,
-  securityType: string,
-  overridesBySymbol: Map<string, string>
-): string {
-  return overridesBySymbol.get(symbol) ?? bucketLabelForSecurityType(securityType);
+export function resolveStrategyBucketName(symbol: string, overridesBySymbol: Map<string, string>): string {
+  return overridesBySymbol.get(symbol) ?? "Unclassified";
 }
 
 /** Selects the latest complete report for each account, excluding exited symbols. */

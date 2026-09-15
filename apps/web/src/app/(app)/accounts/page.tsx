@@ -49,6 +49,7 @@ export default async function AccountsPage() {
     accountId: string;
     symbol: string;
     securityType: string;
+    ibkrSubCategory: string | null;
     quantity: number;
     avgCost: number | null;
     marketValue: number;
@@ -57,12 +58,14 @@ export default async function AccountsPage() {
   let portfolioHistory: { asOfDate: Date; value: number | null }[] = [];
   let targetAllocations: { bucketName: string; targetWeightPct: number; driftThresholdPct: number }[] = [];
   let bucketAssignments: { symbol: string; bucketName: string }[] = [];
+  let instrumentTypeOverrides: { symbol: string; instrumentType: string }[] = [];
   if (ibkrAccountIds.length > 0) {
-    const [holdings, historyRows, targetAllocationRows, bucketAssignmentRows] = await Promise.all([
+    const [holdings, historyRows, targetAllocationRows, bucketAssignmentRows, instrumentTypeOverrideRows] = await Promise.all([
       readCurrentHoldings(userId, ibkrAccountIds),
       readPortfolioHistory(userId, ibkrCurrency, ibkrAccountIds),
       prisma.targetAllocation.findMany({ where: { userId } }),
       prisma.holdingBucketAssignment.findMany({ where: { userId } }),
+      prisma.instrumentTypeOverride.findMany({ where: { userId } }),
     ]);
     const latestBySymbol = holdings.filter((h) => Number(h.quantity) !== 0);
     for (const h of latestBySymbol) {
@@ -71,6 +74,7 @@ export default async function AccountsPage() {
         accountId: h.accountId,
         symbol: h.symbol,
         securityType: h.securityType,
+        ibkrSubCategory: h.ibkrSubCategory,
         quantity: Number(h.quantity),
         avgCost: h.avgCost !== null ? requireConversion(Number(h.avgCost), h.currency, ibkrCurrency, rates) : null,
         marketValue: requireConversion(Number(h.marketValue), h.currency, ibkrCurrency, rates),
@@ -84,6 +88,7 @@ export default async function AccountsPage() {
       driftThresholdPct: Number(t.driftThresholdPct),
     }));
     bucketAssignments = bucketAssignmentRows.map((b) => ({ symbol: b.symbol, bucketName: b.bucketName }));
+    instrumentTypeOverrides = instrumentTypeOverrideRows.map((o) => ({ symbol: o.symbol, instrumentType: o.instrumentType }));
   }
 
   const assets = accounts.filter((a) => a.classification === "asset");
@@ -132,6 +137,7 @@ export default async function AccountsPage() {
           history={portfolioHistory}
           currency={ibkrCurrency}
           bucketAssignments={bucketAssignments}
+          instrumentTypeOverrides={instrumentTypeOverrides}
         />
       )}
 

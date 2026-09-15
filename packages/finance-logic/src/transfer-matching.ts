@@ -117,6 +117,125 @@ export function matchTransfers(
   return accepted;
 }
 
+export interface ReversalCandidateEvent {
+  id: string;
+  accountId: string;
+  /** Signed: negative = money out, positive = money in. */
+  amount: number;
+  currency: string;
+  date: Date;
+  /** Normalized merchant/description key (see normalizeMerchantKey) -- null if there's nothing to compare. */
+  merchantKey: string | null;
+  pending: boolean;
+}
+
+export interface ReversalMatchResult {
+  aId: string;
+  bId: string;
+  confidenceScore: number;
+  daysApart: number;
+}
+
+const REVERSAL_MAX_DATE_DISTANCE_DAYS = 10;
+const REVERSAL_MIN_CONFIDENCE = 0.65;
+
+/** Jaccard similarity over whitespace-separated tokens -- 0 for no shared words, 1 for identical text. */
+function tokenSimilarity(a: string, b: string): number {
+  const tokensA = new Set(a.split(/\s+/).filter(Boolean));
+  const tokensB = new Set(b.split(/\s+/).filter(Boolean));
+  if (tokensA.size === 0 || tokensB.size === 0) return 0;
+  let intersectionSize = 0;
+  for (const t of tokensA) if (tokensB.has(t)) intersectionSize++;
+  const unionSize = tokensA.size + tokensB.size - intersectionSize;
+  return intersectionSize / unionSize;
+}
+
+/**
+ * Detects likely same-account reversal/refund pairs -- deliberately a
+ * separate algorithm from matchTransfers, not a same-account call to it.
+ * matchTransfers is tuned for cross-account transfers (amount-closeness +
+ * date-closeness is a fine signal there, since a transfer's two legs really
+ * are just "money leaving one account, arriving another"). A reversal is a
+ * different claim -- "this specific charge got undone" -- and exact opposite
+ * amount + nearby date is NOT sufficient evidence for that on its own (an
+ * unrelated $15 fee and an unrelated $15 refund three weeks apart can
+ * satisfy it by pure coincidence). So this requires, as hard gates before
+ * any pair is even scored:
+ *   - same account
+ *   - EXACT opposite amount (not just close)
+ *   - normalized merchant/description keys share at least one real word
+ *     (token-overlap similarity > 0 -- catches "Store Purchase" / "Store
+ *     Refund" as related, but a totally unrelated pair like an unrelated fee
+ *     and an unrelated credit shares nothing and is disqualified outright,
+ *     never becoming a scored candidate)
+ *   - within a tightened date window (default 10 days, well under
+ *     matchTransfers' cross-account default)
+ * Merchant similarity is a gate, not a scored dimension -- once a pair has
+ * clearly related text (any shared word) and the exact-amount/same-account/
+ * date-window requirements, what actually separates a real reversal from a
+ * coincidence is timing: date-closeness dominates the score, with a smaller
+ * contribution from the pending/posted relationship (both pending on the
+ * same day -- e.g. an authorization hold reversed same-day -- is the
+ * strongest real-world signal, corroborating a match that's a few days out
+ * rather than same-day). Only accepted above a high minimum confidence.
+ * Prefers false negatives over false positives by design: a merchant
+ * mismatch or a weak score simply produces no match at all, never a
+ * low-confidence guess.
+ */
+export function matchReversals(
+  events: ReversalCandidateEvent[],
+  options?: { maxDateDistanceDays?: number; minConfidence?: number }
+): ReversalMatchResult[] {
+  const maxDateDistanceDays = options?.maxDateDistanceDays ?? REVERSAL_MAX_DATE_DISTANCE_DAYS;
+  const minConfidence = options?.minConfidence ?? REVERSAL_MIN_CONFIDENCE;
+
+  const candidates: ReversalMatchResult[] = [];
+
+  for (let i = 0; i < events.length; i++) {
+    for (let j = i + 1; j < events.length; j++) {
+      const a = events[i];
+      const b = events[j];
+
+      if (a.accountId !== b.accountId) continue;
+      if (a.currency !== b.currency) continue;
+      if (a.amount === 0 || b.amount === 0) continue;
+      if (a.amount !== -b.amount) continue; // exact opposite required, not merely close
+      if (!a.merchantKey || !b.merchantKey) continue;
+      if (tokenSimilarity(a.merchantKey, b.merchantKey) <= 0) continue; // hard gate: zero word overlap disqualifies the pair outright
+
+      const daysApart = daysBetween(a.date, b.date);
+      if (daysApart > maxDateDistanceDays) continue;
+
+      const dateScore = clamp01(1 - daysApart / maxDateDistanceDays);
+      const pendingScore = a.pending && b.pending ? 1 : a.pending !== b.pending ? 0.5 : 0.25;
+      const confidenceScore = clamp01(0.85 * dateScore + 0.15 * pendingScore);
+
+      if (confidenceScore < minConfidence) continue;
+
+      candidates.push({ aId: a.id, bId: b.id, confidenceScore, daysApart });
+    }
+  }
+
+  candidates.sort((x, y) => {
+    if (y.confidenceScore !== x.confidenceScore) return y.confidenceScore - x.confidenceScore;
+    if (x.daysApart !== y.daysApart) return x.daysApart - y.daysApart;
+    const xKey = `${x.aId}:${x.bId}`;
+    const yKey = `${y.aId}:${y.bId}`;
+    return xKey < yKey ? -1 : xKey > yKey ? 1 : 0;
+  });
+
+  const used = new Set<string>();
+  const accepted: ReversalMatchResult[] = [];
+  for (const candidate of candidates) {
+    if (used.has(candidate.aId) || used.has(candidate.bId)) continue;
+    used.add(candidate.aId);
+    used.add(candidate.bId);
+    accepted.push(candidate);
+  }
+
+  return accepted;
+}
+
 export interface CrossCurrencyTransferCandidate {
   aId: string;
   bId: string;

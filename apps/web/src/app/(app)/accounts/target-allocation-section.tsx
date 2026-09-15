@@ -1,23 +1,29 @@
-import { computeCurrentAllocation, computePortfolioDrift, resolveBucketName } from "@finance-app/finance-logic";
+import { computeCurrentAllocation, computePortfolioDrift, resolveStrategyBucketName } from "@finance-app/finance-logic";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { SetTargetAllocationDialog } from "./set-target-allocation-dialog";
 import { DeleteTargetAllocationButton } from "./delete-target-allocation-button";
 
+/**
+ * Strategy allocation only -- bucket names here always come from the user's
+ * own HoldingBucketAssignment ("Core"/"Satellite"/etc.) or "Unclassified",
+ * never an instrument-type label. See instrument-classification.ts for the
+ * separate "what IS this security" axis, shown elsewhere (HoldingsSection).
+ */
 export function TargetAllocationSection({
   holdings,
   targets,
   bucketAssignments,
 }: {
-  holdings: { symbol: string; securityType: string; marketValue: number }[];
+  holdings: { symbol: string; marketValue: number }[];
   targets: { bucketName: string; targetWeightPct: number; driftThresholdPct: number }[];
   bucketAssignments: { symbol: string; bucketName: string }[];
 }) {
   const overridesBySymbol = new Map(bucketAssignments.map((a) => [a.symbol, a.bucketName]));
   const current = computeCurrentAllocation(
     holdings.map((h) => ({
-      bucketName: resolveBucketName(h.symbol, h.securityType, overridesBySymbol),
+      bucketName: resolveStrategyBucketName(h.symbol, overridesBySymbol),
       marketValue: h.marketValue,
     }))
   );

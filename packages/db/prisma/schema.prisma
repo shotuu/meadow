@@ -96,6 +96,7 @@ model AppUser {
   recurringSeries       RecurringSeries[]
   targetAllocations     TargetAllocation[]
   holdingBuckets        HoldingBucketAssignment[]
+  instrumentTypeOverrides InstrumentTypeOverride[]
   alertRules            AlertRule[]
   alertEvents           AlertEvent[]
   importBatches         ImportBatch[]
@@ -729,7 +730,17 @@ model InvestmentHolding {
   id             String   @id @default(cuid())
   accountId      String   @map("account_id")
   symbol         String
+  // Raw IBKR Flex OpenPosition.assetCategory (e.g. "STK", "BOND", "CASH") --
+  // a broker fact, not Meadow's normalized instrument-type interpretation.
+  // See classifyInstrumentType in @finance-app/finance-logic, which combines
+  // this with ibkrSubCategory (below) and any InstrumentTypeOverride.
   securityType   String   @map("security_type")
+  // Raw IBKR Flex OpenPosition.subCategory (e.g. "COMMON", "ETF",
+  // "CLOSED-END FUND"). Null for asset categories where IBKR doesn't report
+  // one (CASH, and any position synced before this field existed). This is
+  // the field that actually distinguishes an ETF from an individual stock --
+  // securityType alone reports both as "STK".
+  ibkrSubCategory String? @map("ibkr_sub_category")
   quantity       Decimal  @db.Decimal(20, 8)
   avgCost        Decimal? @map("avg_cost") @db.Decimal(18, 4)
   currency       String
@@ -741,6 +752,37 @@ model InvestmentHolding {
 
   @@unique([accountId, symbol, asOfDate])
   @@map("investment_holdings")
+  @@schema("app")
+}
+
+enum InstrumentType {
+  stock
+  etf
+  fund
+  bond
+  cash
+  crypto
+  option
+  other
+  unknown
+
+  @@schema("app")
+}
+
+// Manual correction of a symbol's normalized instrument type, independent of
+// HoldingBucketAssignment (that's strategy, this is "what the security IS").
+// Persists across IBKR re-syncs since it's keyed by symbol, not by any
+// per-snapshot InvestmentHolding row -- see classifyInstrumentType's
+// priority order (this always wins over IBKR metadata/deterministic rules).
+model InstrumentTypeOverride {
+  userId         String         @map("user_id")
+  symbol         String
+  instrumentType InstrumentType @map("instrument_type")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, symbol])
+  @@map("instrument_type_overrides")
   @@schema("app")
 }
 

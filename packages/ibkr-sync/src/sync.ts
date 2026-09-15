@@ -85,7 +85,7 @@ async function syncUnlocked(configId: string): Promise<SyncResult> {
       if (currentSymbols.has(old.symbol)) continue;
       const key = { accountId: config.accountId, symbol: old.symbol, asOfDate: reportDate };
       await db.investmentHolding.upsert({ where: { accountId_symbol_asOfDate: key },
-        create: { ...key, securityType: old.securityType, currency: old.currency, quantity: 0, marketValue: 0 },
+        create: { ...key, securityType: old.securityType, ibkrSubCategory: old.ibkrSubCategory, currency: old.currency, quantity: 0, marketValue: 0 },
         update: { quantity: 0, marketValue: 0 } });
       await db.investmentHoldingHistory.upsert({ where: { accountId_symbol_asOfDate: key },
         create: { ...key, quantity: 0, marketValue: 0 }, update: { quantity: 0, marketValue: 0 } });
@@ -101,12 +101,19 @@ async function syncUnlocked(configId: string): Promise<SyncResult> {
         marketValue: Number(pos["@_positionValue"]),
       };
 
+      // subCategory is the field that actually distinguishes an ETF from an
+      // individual stock -- assetCategory alone reports both as "STK". Not
+      // every asset category has one (e.g. CASH doesn't), so this stays
+      // optional rather than required.
+      const ibkrSubCategory = pos["@_subCategory"] ? String(pos["@_subCategory"]) : null;
+
       await db.investmentHolding.upsert({
         where: { accountId_symbol_asOfDate: { accountId: config.accountId, symbol, asOfDate } },
         create: {
           accountId: config.accountId,
           symbol,
           securityType: String(pos["@_assetCategory"]),
+          ibkrSubCategory,
           currency: String(pos["@_currency"]),
           avgCost: pos["@_costBasisPrice"] ? Number(pos["@_costBasisPrice"]) : null,
           asOfDate,
@@ -114,6 +121,7 @@ async function syncUnlocked(configId: string): Promise<SyncResult> {
         },
         update: {
           securityType: String(pos["@_assetCategory"]),
+          ibkrSubCategory,
           currency: String(pos["@_currency"]),
           avgCost: pos["@_costBasisPrice"] ? Number(pos["@_costBasisPrice"]) : null,
           ...shared,
@@ -139,8 +147,8 @@ async function syncUnlocked(configId: string): Promise<SyncResult> {
 
       await db.investmentHolding.upsert({
         where: { accountId_symbol_asOfDate: { accountId: config.accountId, symbol, asOfDate } },
-        create: { accountId: config.accountId, symbol, securityType: "CASH", currency: row.currency, avgCost: null, asOfDate, ...shared },
-        update: { securityType: "CASH", currency: row.currency, avgCost: null, ...shared },
+        create: { accountId: config.accountId, symbol, securityType: "CASH", ibkrSubCategory: null, currency: row.currency, avgCost: null, asOfDate, ...shared },
+        update: { securityType: "CASH", ibkrSubCategory: null, currency: row.currency, avgCost: null, ...shared },
       });
 
       await db.investmentHoldingHistory.upsert({

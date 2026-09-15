@@ -4,7 +4,7 @@ import {
   computeCurrentAllocation,
   computePortfolioDrift,
   countPeriodsUntil,
-  resolveBucketName,
+  resolveStrategyBucketName,
 } from "@finance-app/finance-logic";
 
 /**
@@ -259,7 +259,7 @@ async function evaluatePortfolioDrift(rule: AlertRule): Promise<void> {
   const rates = await readUsdRates();
   const current = computeCurrentAllocation(
     latest.map((h) => ({
-      bucketName: resolveBucketName(h.symbol, h.securityType, overridesBySymbol),
+      bucketName: resolveStrategyBucketName(h.symbol, overridesBySymbol),
       marketValue: requireConversion(Number(h.marketValue), h.currency, "USD", rates),
     }))
   );

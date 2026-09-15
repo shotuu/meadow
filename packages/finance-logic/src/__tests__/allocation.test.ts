@@ -1,27 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  bucketLabelForSecurityType,
   computeCurrentAllocation,
   computePortfolioDrift,
   latestHoldingsBySymbol,
-  resolveBucketName,
+  resolveStrategyBucketName,
 } from "../allocation";
-
-describe("bucketLabelForSecurityType", () => {
-  it("maps known IBKR asset categories to friendly labels", () => {
-    expect(bucketLabelForSecurityType("STK")).toBe("Stocks");
-    expect(bucketLabelForSecurityType("BOND")).toBe("Bonds");
-    expect(bucketLabelForSecurityType("CASH")).toBe("Cash");
-  });
-
-  it("is case-insensitive on the input", () => {
-    expect(bucketLabelForSecurityType("stk")).toBe("Stocks");
-  });
-
-  it("falls back to a title-cased version of an unrecognized code", () => {
-    expect(bucketLabelForSecurityType("XYZ")).toBe("Xyz");
-  });
-});
 
 describe("computeCurrentAllocation", () => {
   it("groups by bucket and computes % of total", () => {
@@ -90,19 +73,19 @@ describe("computePortfolioDrift", () => {
   });
 });
 
-describe("resolveBucketName", () => {
+describe("resolveStrategyBucketName", () => {
   it("prefers the user's bucket assignment when one exists for the symbol", () => {
     const overrides = new Map([["IMID", "Core"]]);
-    expect(resolveBucketName("IMID", "STK", overrides)).toBe("Core");
+    expect(resolveStrategyBucketName("IMID", overrides)).toBe("Core");
   });
 
-  it("falls back to the security-type-derived label when no assignment exists", () => {
+  it("falls back to Unclassified when no assignment exists -- never an instrument-type label", () => {
     const overrides = new Map([["IMID", "Core"]]);
-    expect(resolveBucketName("AMD", "STK", overrides)).toBe("Stocks");
+    expect(resolveStrategyBucketName("AMD", overrides)).toBe("Unclassified");
   });
 
   it("falls back correctly with an empty overrides map", () => {
-    expect(resolveBucketName("AMD", "STK", new Map())).toBe("Stocks");
+    expect(resolveStrategyBucketName("AMD", new Map())).toBe("Unclassified");
   });
 });
 

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, TrendingUp } from "lucide-react";
 import { prisma } from "@finance-app/db";
-import { resolveBucketName } from "@finance-app/finance-logic";
+import { classifyInstrumentType, instrumentTypeLabel, resolveStrategyBucketName, type InstrumentType } from "@finance-app/finance-logic";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 import { PortfolioValueChart } from "../../portfolio-value-chart";
 import { SetHoldingBucketDialog } from "../../set-holding-bucket-dialog";
 import { RemoveHoldingBucketButton } from "../../remove-holding-bucket-button";
+import { SetInstrumentTypeDialog } from "../../set-instrument-type-dialog";
+import { RemoveInstrumentTypeOverrideButton } from "../../remove-instrument-type-override-button";
 
 const TRADE_TYPE_LABEL: Record<string, string> = {
   buy: "Buy",
@@ -28,7 +30,7 @@ export default async function HoldingDetailPage({ params }: { params: Promise<{ 
   const { symbol } = await params;
 
   const appUser = await prisma.appUser.findUniqueOrThrow({ where: { id: userId } });
-  const [holdings, history, transactions, bucketAssignment] = await Promise.all([
+  const [holdings, history, transactions, bucketAssignment, instrumentTypeOverride] = await Promise.all([
     readCurrentHoldings(userId),
     readPortfolioHistory(userId, appUser.defaultCurrency, undefined, symbol),
     prisma.investmentTransaction.findMany({
@@ -36,6 +38,7 @@ export default async function HoldingDetailPage({ params }: { params: Promise<{ 
       orderBy: { tradeDate: "desc" },
     }),
     prisma.holdingBucketAssignment.findUnique({ where: { userId_symbol: { userId, symbol } } }),
+    prisma.instrumentTypeOverride.findUnique({ where: { userId_symbol: { userId, symbol } } }),
   ]);
 
   if (!holdings.some((h) => h.symbol === symbol) && transactions.length === 0) notFound();
@@ -45,10 +48,16 @@ export default async function HoldingDetailPage({ params }: { params: Promise<{ 
   const accounts = await prisma.financialAccount.findMany({ where: { userId }, select: { id: true, name: true } });
   const accountNames = new Map(accounts.map((a) => [a.id, a.name]));
   const securityType = currentHoldings[0]?.securityType ?? "";
+  const ibkrSubCategory = currentHoldings[0]?.ibkrSubCategory ?? null;
   const overridesBySymbol: Map<string, string> = bucketAssignment
     ? new Map([[symbol, bucketAssignment.bucketName]])
     : new Map();
-  const resolvedBucketName = resolveBucketName(symbol, securityType, overridesBySymbol);
+  const resolvedBucketName = resolveStrategyBucketName(symbol, overridesBySymbol);
+  const instrumentClassification = classifyInstrumentType({
+    ibkrAssetCategory: securityType || null,
+    ibkrSubCategory,
+    manualOverride: (instrumentTypeOverride?.instrumentType as InstrumentType | undefined) ?? null,
+  });
 
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
@@ -58,10 +67,17 @@ export default async function HoldingDetailPage({ params }: { params: Promise<{ 
             <ArrowLeft className="size-4" />
           </Link>
           <h1 className="text-2xl font-semibold">{securityType === "CASH" ? currentHoldings[0]?.currency ?? symbol : symbol}</h1>
+          <Badge variant="outline">{instrumentTypeLabel(instrumentClassification.instrumentType)}</Badge>
           <Badge variant={bucketAssignment ? "secondary" : "outline"}>{resolvedBucketName}</Badge>
         </div>
         {securityType && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {instrumentTypeOverride && <RemoveInstrumentTypeOverrideButton symbol={symbol} />}
+            <SetInstrumentTypeDialog
+              symbol={symbol}
+              currentInstrumentType={instrumentClassification.instrumentType}
+              triggerLabel={instrumentTypeOverride ? "Edit type" : "Correct type"}
+            />
             {bucketAssignment && <RemoveHoldingBucketButton symbol={symbol} />}
             <SetHoldingBucketDialog
               symbol={symbol}

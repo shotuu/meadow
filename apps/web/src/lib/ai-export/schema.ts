@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export type ExportMode = "standard" | "privacy_safe";
 
@@ -18,6 +18,19 @@ export type ExportMode = "standard" | "privacy_safe";
  * best-effort income-type and transaction-relationship tagging (always
  * confidence-qualified, never asserted as fact), and a privacy_safe export
  * mode. See ARCHITECTURE_FIXES.md and the AI-export-v2 plan for rationale.
+ *
+ * v3: instrumentType is now a real classification (stock vs. etf vs. fund
+ * vs. ...) derived from IBKR's own assetCategory + subCategory fields (or a
+ * manual override), not IBKR's raw assetCategory reused as-is -- see
+ * classifyInstrumentType in @finance-app/finance-logic. Adds
+ * instrumentTypeSource/instrumentTypeConfidence provenance and the raw
+ * ibkrAssetCategory/ibkrSubCategory fields (kept separate from the
+ * normalized interpretation, never conflated). investments.allocation now
+ * groups by the normalized instrumentType, not the raw IBKR code, so ETFs
+ * and individual stocks finally show as separate buckets. Also tightens the
+ * reversal/refund matcher (matchReversals, not the generic transfer
+ * matcher) to require a merchant/description match, not just an exact
+ * opposite amount within a date window.
  */
 export interface AiFinancialContextExport {
   schemaVersion: typeof SCHEMA_VERSION;
@@ -208,8 +221,16 @@ export interface ExportRecurringCharge {
 export interface ExportHolding {
   accountLabel: string;
   symbol: string;
-  /** The provider's own asset-category (STK/BOND/CASH/etc) -- a fact, not a strategy judgment. */
+  /** Meadow's normalized instrument type (stock/etf/fund/bond/cash/crypto/option/other/unknown) -- a fact, not a strategy judgment. */
   instrumentType: string;
+  /** How instrumentType was determined: manual_override > ibkr_metadata > unresolved. See classifyInstrumentType. */
+  instrumentTypeSource: string;
+  /** null only when instrumentTypeSource is "unresolved" -- never a fabricated confidence. */
+  instrumentTypeConfidence: number | null;
+  /** IBKR's raw Flex OpenPosition.assetCategory (e.g. "STK") -- the broker fact instrumentType is derived from, kept separate so the two are never conflated. */
+  ibkrAssetCategory: string;
+  /** IBKR's raw Flex OpenPosition.subCategory (e.g. "ETF", "COMMON") -- null if IBKR didn't report one for this security. */
+  ibkrSubCategory: string | null;
   /** User-defined via bucket assignment; "Unclassified" when the user hasn't set one -- never silently defaults to instrumentType. */
   strategyBucket: string;
   quantity: string;

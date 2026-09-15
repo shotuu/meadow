@@ -17,8 +17,12 @@ import {
   computeInvestableCash,
   computeRequiredContribution,
   addMonthsClamped,
-  matchTransfers,
-  type MoneyMovementEvent,
+  matchReversals,
+  normalizeMerchantKey,
+  classifyInstrumentType,
+  instrumentTypeLabel,
+  type InstrumentType,
+  type ReversalCandidateEvent,
 } from "@finance-app/finance-logic";
 import { requireUserId } from "@/lib/session";
 import {
@@ -59,7 +63,6 @@ import {
 
 const RECENT_WINDOW_MONTHS = 12;
 const UPCOMING_OBLIGATION_WINDOW_DAYS = 90;
-const REVERSAL_MATCH_WINDOW_DAYS = 21;
 
 // Only checking/savings/cash accounts feed the cash-policy calculations --
 // same set the dashboard already uses for this exact purpose.
@@ -153,10 +156,18 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
     ]);
     const recurringLinkedTxIdSet = new Set(recurringLinkedTxIds.map((r) => r.transactionId));
 
-    const reversalEvents: MoneyMovementEvent[] = recentTransactionRows
+    const reversalEvents: ReversalCandidateEvent[] = recentTransactionRows
       .filter((t) => !t.isTransfer)
-      .map((t) => ({ id: t.id, accountId: t.accountId, amount: Number(t.amount), currency: t.currency, date: t.date }));
-    const reversalMatches = matchTransfers(reversalEvents, { sameAccount: true, maxDateDistanceDays: REVERSAL_MATCH_WINDOW_DAYS });
+      .map((t) => ({
+        id: t.id,
+        accountId: t.accountId,
+        amount: Number(t.amount),
+        currency: t.currency,
+        date: t.date,
+        merchantKey: normalizeMerchantKey(t.merchantName ?? t.description) || null,
+        pending: t.pending,
+      }));
+    const reversalMatches = matchReversals(reversalEvents);
     const reversalByTxId = new Map<string, { partnerDate: Date; confidence: number }>();
     const rowById = new Map(recentTransactionRows.map((t) => [t.id, t]));
     for (const match of reversalMatches) {
@@ -273,28 +284,45 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
       confidenceScore: toDecimalString(s.confidenceScore)!,
     }));
 
-    const [holdingRows, bucketAssignments] = await Promise.all([
+    const [holdingRows, bucketAssignments, instrumentTypeOverrideRows] = await Promise.all([
       readCurrentHoldings(userId, undefined, tx),
       tx.holdingBucketAssignment.findMany({ where: { userId } }),
+      tx.instrumentTypeOverride.findMany({ where: { userId } }),
     ]);
     const overridesBySymbol = new Map(bucketAssignments.map((a) => [a.symbol, a.bucketName]));
+    const instrumentOverridesBySymbol = new Map(instrumentTypeOverrideRows.map((o) => [o.symbol, o.instrumentType as InstrumentType]));
     const activeHoldings = holdingRows.filter((h) => Number(h.quantity) !== 0);
-    const holdings: ExportHolding[] = activeHoldings.map((h) => ({
-      accountLabel: accountLabelById.get(h.accountId) ?? "Unknown account",
-      symbol: h.symbol,
-      instrumentType: h.securityType,
-      strategyBucket: overridesBySymbol.get(h.symbol) ?? "Unclassified",
-      quantity: toDecimalString(h.quantity)!,
-      avgCost: toDecimalString(h.avgCost),
-      currency: h.currency,
-      marketValue: toDecimalString(h.marketValue)!,
-      asOfDate: h.asOfDate.toISOString().slice(0, 10),
-    }));
+    const classifyHolding = (h: (typeof activeHoldings)[number]) =>
+      classifyInstrumentType({
+        ibkrAssetCategory: h.securityType,
+        ibkrSubCategory: h.ibkrSubCategory,
+        manualOverride: instrumentOverridesBySymbol.get(h.symbol) ?? null,
+      });
+    const holdings: ExportHolding[] = activeHoldings.map((h) => {
+      const classification = classifyHolding(h);
+      return {
+        accountLabel: accountLabelById.get(h.accountId) ?? "Unknown account",
+        symbol: h.symbol,
+        instrumentType: classification.instrumentType,
+        instrumentTypeSource: classification.source,
+        instrumentTypeConfidence: classification.confidence,
+        ibkrAssetCategory: h.securityType,
+        ibkrSubCategory: h.ibkrSubCategory,
+        strategyBucket: overridesBySymbol.get(h.symbol) ?? "Unclassified",
+        quantity: toDecimalString(h.quantity)!,
+        avgCost: toDecimalString(h.avgCost),
+        currency: h.currency,
+        marketValue: toDecimalString(h.marketValue)!,
+        asOfDate: h.asOfDate.toISOString().slice(0, 10),
+      };
+    });
 
-    // Instrument-type allocation: purely the provider's own asset category, no user input.
+    // Instrument-type allocation: Meadow's normalized classification (ETF vs.
+    // stock vs. ...), never the user's strategy bucket -- see schema.ts's
+    // comment on why these are kept separate dimensions.
     const bucketedByInstrumentType = activeHoldings.flatMap((h) => {
       const converted = convertCurrency(Number(h.marketValue), h.currency, defaultCurrency, currentRates);
-      return converted === null ? [] : [{ bucketName: h.securityType, marketValue: converted }];
+      return converted === null ? [] : [{ bucketName: instrumentTypeLabel(classifyHolding(h).instrumentType), marketValue: converted }];
     });
     const currentAllocation = computeCurrentAllocation(bucketedByInstrumentType).map((a) => ({
       bucketName: a.bucketName,
@@ -313,6 +341,21 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
     const currentStrategyAllocation = computeCurrentAllocation(bucketedByStrategy);
     const strategyTargets = targetRows.map((t) => ({ bucketName: t.bucketName, targetWeightPct: Number(t.targetWeightPct), driftThresholdPct: Number(t.driftThresholdPct) }));
     const strategyDrift = computePortfolioDrift(currentStrategyAllocation, strategyTargets);
+
+    // A target bucket named after a known instrument-type label with no
+    // matching current strategy bucket almost always means a leftover
+    // target from before instrument type and strategy bucket were split
+    // into separate concepts -- flag it by name rather than silently
+    // producing a confusing 100%-drift number with no explanation.
+    const currentStrategyBucketNames = new Set(currentStrategyAllocation.map((a) => a.bucketName));
+    const instrumentLabelSet = new Set((["stock", "etf", "fund", "bond", "cash", "crypto", "option", "other", "unknown"] as InstrumentType[]).map(instrumentTypeLabel));
+    for (const target of strategyTargets) {
+      if (instrumentLabelSet.has(target.bucketName) && !currentStrategyBucketNames.has(target.bucketName)) {
+        warnings.push(
+          `Strategy target "${target.bucketName}" looks like a leftover instrument-type label from before strategy buckets and instrument types were separate concepts -- no current holding is assigned to a strategy bucket with that name, so its drift is likely meaningless. Consider renaming/removing it and assigning holdings to real strategy buckets (e.g. Core/Satellite) on the Accounts page.`
+        );
+      }
+    }
 
     const portfolioHistoryAll = await readPortfolioHistory(userId, defaultCurrency, undefined, undefined, tx);
     const portfolioHistoryRecent = portfolioHistoryAll

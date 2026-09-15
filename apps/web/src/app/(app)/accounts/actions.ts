@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma, AccountType, AccountClassification, SyncSource } from "@finance-app/db";
+import { prisma, AccountType, AccountClassification, SyncSource, InstrumentType } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 
 const LIABILITY_TYPES: AccountType[] = ["credit_card", "loan"];
@@ -115,6 +115,43 @@ export async function removeHoldingBucket(symbol: string) {
   const userId = await requireUserId();
 
   await prisma.holdingBucketAssignment.deleteMany({ where: { userId, symbol } });
+
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/holdings/${encodeURIComponent(symbol)}`);
+}
+
+const INSTRUMENT_TYPES: InstrumentType[] = ["stock", "etf", "fund", "bond", "cash", "crypto", "option", "other", "unknown"];
+
+/**
+ * Manual correction of a symbol's normalized instrument type -- independent
+ * of setHoldingBucket above (that's strategy, this is "what the security
+ * IS"). Persists across IBKR re-syncs since it's keyed by symbol, not by any
+ * per-snapshot InvestmentHolding row -- see classifyInstrumentType, which
+ * always prefers this override over IBKR's own metadata.
+ */
+export async function setInstrumentTypeOverride(formData: FormData) {
+  const userId = await requireUserId();
+
+  const symbol = String(formData.get("symbol") || "").trim();
+  const instrumentType = String(formData.get("instrumentType") || "") as InstrumentType;
+
+  if (!symbol) throw new Error("Symbol is required");
+  if (!INSTRUMENT_TYPES.includes(instrumentType)) throw new Error("Invalid instrument type");
+
+  await prisma.instrumentTypeOverride.upsert({
+    where: { userId_symbol: { userId, symbol } },
+    create: { userId, symbol, instrumentType },
+    update: { instrumentType },
+  });
+
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/holdings/${encodeURIComponent(symbol)}`);
+}
+
+export async function removeInstrumentTypeOverride(symbol: string) {
+  const userId = await requireUserId();
+
+  await prisma.instrumentTypeOverride.deleteMany({ where: { userId, symbol } });
 
   revalidatePath("/accounts");
   revalidatePath(`/accounts/holdings/${encodeURIComponent(symbol)}`);

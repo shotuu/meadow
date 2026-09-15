@@ -153,6 +153,36 @@ integration("architecture regressions against PostgreSQL", () => {
     expect(await db.investmentHolding.count({ where: { accountId, asOfDate: new Date("2026-09-01") } })).toBe(1);
   });
 
+  it("captures IBKR subCategory on sync, and a manual instrument-type override survives repeated re-syncs", async () => {
+    await db.financialAccount.update({ where: { id: accountId }, data: { syncSource: "ibkr_flex", type: "brokerage" } });
+    const config = await db.ibkrFlexConfig.create({ data: { userId: state.userId, accountId, flexToken: "test", flexQueryId: "test" } });
+    const { syncIbkrFlexConfig } = await import("../../../../../packages/ibkr-sync/src/sync");
+    const { classifyInstrumentType } = await import("../../../../../packages/finance-logic/src/instrument-classification");
+    const position = (symbol: string, subCategory: string) => ({ "@_symbol": symbol, "@_position": "1", "@_positionValue": "1000", "@_currency": "USD", "@_assetCategory": "STK", "@_subCategory": subCategory });
+    state.report = { FlexStatements: { FlexStatement: { "@_toDate": "20260901", OpenPositions: { OpenPosition: position("IMID", "ETF") } } } };
+    await syncIbkrFlexConfig(config.id);
+
+    const synced = await db.investmentHolding.findFirst({ where: { accountId, symbol: "IMID" } });
+    expect(synced?.ibkrSubCategory).toBe("ETF");
+
+    // The user manually corrects it (e.g. IBKR briefly reports it oddly) --
+    // this table has no relation to InvestmentHolding at all, so a sync has
+    // no code path that could touch it.
+    await db.instrumentTypeOverride.create({ data: { userId: state.userId, symbol: "IMID", instrumentType: "fund" } });
+
+    state.report = { FlexStatements: { FlexStatement: { "@_toDate": "20260902", OpenPositions: { OpenPosition: position("IMID", "ETF") } } } };
+    await syncIbkrFlexConfig(config.id);
+    state.report = { FlexStatements: { FlexStatement: { "@_toDate": "20260903", OpenPositions: { OpenPosition: position("IMID", "ETF") } } } };
+    await syncIbkrFlexConfig(config.id);
+
+    const override = await db.instrumentTypeOverride.findUnique({ where: { userId_symbol: { userId: state.userId, symbol: "IMID" } } });
+    expect(override?.instrumentType).toBe("fund");
+
+    const latest = await db.investmentHolding.findFirst({ where: { accountId, symbol: "IMID" }, orderBy: { asOfDate: "desc" } });
+    const classification = classifyInstrumentType({ ibkrAssetCategory: latest!.securityType, ibkrSubCategory: latest!.ibkrSubCategory, manualOverride: override?.instrumentType ?? null });
+    expect(classification).toEqual({ instrumentType: "fund", source: "manual_override", confidence: 1 });
+  });
+
   it("does not emit resumed while a recurring series remains overdue", async () => {
     await db.transaction.createMany({ data: ["2026-01-01", "2026-02-01", "2026-03-01"].map((date) => ({ userId: state.userId, accountId, date: new Date(date), amount: -10, currency: "USD", description: "Subscription", merchantName: "Stream" })) });
     const { recomputeRecurringSeriesForUser } = await import("../../../../../apps/worker/src/jobs/recurring");

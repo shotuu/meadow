@@ -1,11 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { findPossibleCrossCurrencyTransfers, matchTransfers, type MoneyMovementEvent } from "../transfer-matching";
+import {
+  findPossibleCrossCurrencyTransfers,
+  matchReversals,
+  matchTransfers,
+  type MoneyMovementEvent,
+  type ReversalCandidateEvent,
+} from "../transfer-matching";
 
 const event = (overrides: Partial<MoneyMovementEvent> & Pick<MoneyMovementEvent, "id">): MoneyMovementEvent => ({
   accountId: "acct-default",
   amount: 0,
   currency: "USD",
   date: new Date("2026-09-01"),
+  ...overrides,
+});
+
+const reversalEvent = (
+  overrides: Partial<ReversalCandidateEvent> & Pick<ReversalCandidateEvent, "id">
+): ReversalCandidateEvent => ({
+  accountId: "acct-default",
+  amount: 0,
+  currency: "USD",
+  date: new Date("2026-09-01"),
+  merchantKey: "default merchant",
+  pending: false,
   ...overrides,
 });
 
@@ -196,5 +214,99 @@ describe("pair eligibility", () => {
     const result = matchTransfers(events, { eligiblePair: (a, b) => a.id === "bank" || b.id === "bank" });
     expect(result).toHaveLength(1);
     expect([result[0].aId, result[0].bId]).toContain("bank");
+  });
+});
+
+describe("matchReversals", () => {
+  it("matches the Peerspace case: same account, same day, same merchant, exact opposite amounts, both pending", () => {
+    const events = [
+      reversalEvent({ id: "charge", amount: 432.28, date: new Date("2026-09-10"), merchantKey: "peerspace", pending: true }),
+      reversalEvent({ id: "reversal", amount: -432.28, date: new Date("2026-09-10"), merchantKey: "peerspace", pending: true }),
+    ];
+    const result = matchReversals(events);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ aId: "charge", bId: "reversal", daysApart: 0 });
+    expect(result[0].confidenceScore).toBeCloseTo(1, 5);
+  });
+
+  it("does NOT flag an unrelated same-account, exact-opposite-amount pair with a different merchant (the wire-fee false positive)", () => {
+    const events = [
+      reversalEvent({ id: "wire-fee", amount: -15, date: new Date("2026-09-01"), merchantKey: "wire transfer fee", pending: false }),
+      reversalEvent({ id: "unrelated-credit", amount: 15, date: new Date("2026-09-08"), merchantKey: "some other merchant", pending: false }),
+    ];
+    expect(matchReversals(events)).toEqual([]);
+  });
+
+  it("requires an exact opposite amount, not merely close", () => {
+    const events = [
+      reversalEvent({ id: "a", amount: -100, date: new Date("2026-09-01"), merchantKey: "acme" }),
+      reversalEvent({ id: "b", amount: 99, date: new Date("2026-09-01"), merchantKey: "acme" }),
+    ];
+    expect(matchReversals(events)).toEqual([]);
+  });
+
+  it("requires the same account", () => {
+    const events = [
+      reversalEvent({ id: "a", accountId: "acct-1", amount: -100, date: new Date("2026-09-01"), merchantKey: "acme", pending: true }),
+      reversalEvent({ id: "b", accountId: "acct-2", amount: 100, date: new Date("2026-09-01"), merchantKey: "acme", pending: true }),
+    ];
+    expect(matchReversals(events)).toEqual([]);
+  });
+
+  it("rejects a same-merchant, exact-opposite-amount pair once it's too far apart in time without a pending relationship", () => {
+    const events = [
+      reversalEvent({ id: "a", amount: -100, date: new Date("2026-09-01"), merchantKey: "acme", pending: false }),
+      reversalEvent({ id: "b", amount: 100, date: new Date("2026-09-06"), merchantKey: "acme", pending: false }), // 5 days apart, both posted
+    ];
+    expect(matchReversals(events)).toEqual([]);
+  });
+
+  it("accepts a same-merchant pair a few days apart when a pending/posted relationship corroborates it", () => {
+    const events = [
+      reversalEvent({ id: "a", amount: -100, date: new Date("2026-09-01"), merchantKey: "acme", pending: true }),
+      reversalEvent({ id: "b", amount: 100, date: new Date("2026-09-03"), merchantKey: "acme", pending: true }), // 2 days apart, both pending
+    ];
+    const result = matchReversals(events);
+    expect(result).toHaveLength(1);
+  });
+
+  it("accepts a partial merchant/description match (e.g. 'Store purchase' vs 'Store refund'), not just an exact one", () => {
+    const events = [
+      reversalEvent({ id: "charge", amount: -40, date: new Date("2026-09-10"), merchantKey: "store purchase", pending: false }),
+      reversalEvent({ id: "refund", amount: 40, date: new Date("2026-09-12"), merchantKey: "store refund", pending: false }), // 2 days later
+    ];
+    const result = matchReversals(events);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ aId: "charge", bId: "refund" });
+  });
+
+  it("rejects a pair whose descriptions share no words at all, even with a partial-match minimum", () => {
+    const events = [
+      reversalEvent({ id: "a", amount: -40, date: new Date("2026-09-10"), merchantKey: "store purchase", pending: false }),
+      reversalEvent({ id: "b", amount: 40, date: new Date("2026-09-10"), merchantKey: "completely unrelated thing", pending: false }),
+    ];
+    expect(matchReversals(events)).toEqual([]);
+  });
+
+  it("never matches when a merchant key is missing on either side", () => {
+    const events = [
+      reversalEvent({ id: "a", amount: -100, date: new Date("2026-09-01"), merchantKey: null }),
+      reversalEvent({ id: "b", amount: 100, date: new Date("2026-09-01"), merchantKey: "acme" }),
+    ];
+    expect(matchReversals(events)).toEqual([]);
+  });
+
+  it("does not cross-contaminate multiple independent reversal pairs in one run", () => {
+    const events = [
+      reversalEvent({ id: "a1", amount: -50, date: new Date("2026-09-01"), merchantKey: "acme", pending: true }),
+      reversalEvent({ id: "a2", amount: 50, date: new Date("2026-09-01"), merchantKey: "acme", pending: true }),
+      reversalEvent({ id: "b1", amount: -75, date: new Date("2026-09-02"), merchantKey: "widgetco", pending: true }),
+      reversalEvent({ id: "b2", amount: 75, date: new Date("2026-09-02"), merchantKey: "widgetco", pending: true }),
+    ];
+    const result = matchReversals(events);
+    expect(result).toHaveLength(2);
+    const pairs = result.map((r) => [r.aId, r.bId].sort().join(":"));
+    expect(pairs).toContain("a1:a2");
+    expect(pairs).toContain("b1:b2");
   });
 });
