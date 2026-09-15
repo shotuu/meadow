@@ -205,6 +205,18 @@ export async function recomputeRecurringSeriesForUser(userId: string): Promise<v
     const linkedIds = new Set(alreadyLinked.map((l) => l.transactionId));
     const toLink = occurrences.filter((o) => !linkedIds.has(o.id));
     if (toLink.length > 0) {
+      // RecurringSeriesTransaction.transactionId is globally unique (one
+      // series per transaction), but a transaction's group can change
+      // run-to-run (merchant name edited, account moved, a merchant that
+      // used to be one group splitting into several via the groupKey
+      // migration above). The deleteMany above only clears this series'
+      // own stale links, so a transaction still linked to a *different*
+      // series would otherwise collide with the unique constraint here --
+      // clear any such stray link first so it can follow the transaction
+      // to its current group.
+      await prisma.recurringSeriesTransaction.deleteMany({
+        where: { transactionId: { in: toLink.map((o) => o.id) } },
+      });
       await prisma.recurringSeriesTransaction.createMany({
         data: toLink.map((o) => ({ recurringSeriesId: series.id, transactionId: o.id })),
       });
