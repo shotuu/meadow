@@ -18,3 +18,5 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 export * from "./generated/prisma/client";
+
+export { withAdvisoryLock, closeLockPool } from "./locks";

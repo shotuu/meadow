@@ -27,6 +27,11 @@ export async function createTransaction(formData: FormData) {
   if (!description) throw new Error("Description is required");
   if (!Number.isFinite(amountInput) || amountInput === 0) throw new Error("Amount must be non-zero");
 
+  if (Number.isNaN(date.getTime())) throw new Error("Date is required");
+  if (categoryIdInput) await prisma.category.findFirstOrThrow({ where: { id: categoryIdInput, userId } });
+  if (isTransfer && (!transferAccountId || transferAccountId === accountId)) {
+    throw new Error("Choose a different destination account");
+  }
   let categoryId: string | null = categoryIdInput || null;
   if (!categoryId && !isTransfer) {
     categoryId = await applyCategorizationRules(userId, merchantName, description);
@@ -37,37 +42,20 @@ export async function createTransaction(formData: FormData) {
       where: { id: transferAccountId, userId },
     });
 
-    const [txA, txB] = await prisma.$transaction([
-      prisma.transaction.create({
-        data: {
-          userId,
-          accountId: account.id,
-          amount: amountInput,
-          currency: account.currency,
-          description,
-          merchantName,
-          date,
-          isTransfer: true,
-        },
-      }),
-      prisma.transaction.create({
-        data: {
-          userId,
-          accountId: otherAccount.id,
-          amount: -amountInput,
-          currency: otherAccount.currency,
-          description,
-          merchantName,
-          date,
-          isTransfer: true,
-        },
-      }),
-    ]);
-
-    await prisma.$transaction([
-      prisma.transaction.update({ where: { id: txA.id }, data: { transferPairId: txB.id } }),
-      prisma.transaction.update({ where: { id: txB.id }, data: { transferPairId: txA.id } }),
-    ]);
+    if (account.currency !== otherAccount.currency) {
+      throw new Error("Cross-currency transfers require separate native-currency entries");
+    }
+    await prisma.$transaction(async (db) => {
+      const common = { userId, description, merchantName, date, isTransfer: true };
+      const txA = await db.transaction.create({ data: {
+        ...common, accountId: account.id, amount: amountInput, currency: account.currency,
+      } });
+      const txB = await db.transaction.create({ data: {
+        ...common, accountId: otherAccount.id, amount: -amountInput, currency: otherAccount.currency,
+        transferPairId: txA.id,
+      } });
+      await db.transaction.update({ where: { id: txA.id }, data: { transferPairId: txB.id } });
+    });
   } else {
     await prisma.transaction.create({
       data: {
@@ -79,7 +67,7 @@ export async function createTransaction(formData: FormData) {
         merchantName,
         date,
         categoryId,
-        categorySource: categoryId ? "rule" : "uncategorized",
+        categorySource: categoryIdInput ? "manual" : categoryId ? "rule" : "uncategorized",
       },
     });
   }
@@ -90,6 +78,7 @@ export async function createTransaction(formData: FormData) {
 
 export async function setTransactionCategory(transactionId: string, categoryId: string) {
   const userId = await requireUserId();
+  await prisma.category.findFirstOrThrow({ where: { id: categoryId, userId } });
 
   const transaction = await prisma.transaction.findFirstOrThrow({
     where: { id: transactionId, userId },
@@ -116,6 +105,7 @@ export async function confirmTransactionCategory(transactionId: string) {
     where: { id: transactionId, userId },
   });
   if (!transaction.categoryId) throw new Error("Transaction has no category to confirm");
+  await prisma.category.findFirstOrThrow({ where: { id: transaction.categoryId, userId } });
 
   await prisma.transaction.update({
     where: { id: transaction.id },

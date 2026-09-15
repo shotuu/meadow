@@ -1,11 +1,10 @@
-import { prisma, type AlertRule, type BudgetPeriod } from "@finance-app/db";
+import { computeRecurringBudgetProgress, readAccountBalances, readCurrentHoldings, readUsdRates, requireConversion } from "@finance-app/finance-data";
+import { prisma, type AlertRule } from "@finance-app/db";
 import {
-  bucketLabelForSecurityType,
   computeCurrentAllocation,
   computePortfolioDrift,
   countPeriodsUntil,
-  getPeriodRange,
-  latestHoldingsBySymbol,
+  resolveBucketName,
 } from "@finance-app/finance-logic";
 
 /**
@@ -14,13 +13,16 @@ import {
  */
 export async function evaluateAlertRulesForAllUsers(): Promise<void> {
   const rules = await prisma.alertRule.findMany({ where: { isActive: true } });
+  const failures: unknown[] = [];
   for (const rule of rules) {
     try {
       await evaluateRule(rule);
     } catch (err) {
+      failures.push(err);
       console.error(`[worker] evaluateAlertRules: rule ${rule.id} (${rule.ruleType}) failed`, err);
     }
   }
+  if (failures.length) throw new AggregateError(failures, "Alert evaluation incomplete");
 }
 
 async function evaluateRule(rule: AlertRule): Promise<void> {
@@ -82,18 +84,14 @@ async function evaluateBudgetOverTarget(rule: AlertRule): Promise<void> {
 
   const [budget, category] = await Promise.all([
     prisma.budget.findFirst({ where: { userId: rule.userId, categoryId: rule.categoryId, effectiveTo: null } }),
-    prisma.category.findUnique({ where: { id: rule.categoryId } }),
+    prisma.category.findFirst({ where: { id: rule.categoryId, userId: rule.userId } }),
   ]);
   if (!budget || !category) return;
 
-  const { start, end } = getPeriodRange(budget.period as BudgetPeriod, new Date());
-  const spent = await prisma.transaction.aggregate({
-    where: { userId: rule.userId, categoryId: rule.categoryId, isTransfer: false, date: { gte: start, lt: end } },
-    _sum: { amount: true },
-  });
-  const spentAmount = Math.abs(Number(spent._sum.amount ?? 0));
-  const budgetAmount = Number(budget.amount);
-  const pctUsed = budgetAmount === 0 ? 0 : (spentAmount / budgetAmount) * 100;
+  const progress = await computeRecurringBudgetProgress(rule.userId, category, budget, new Date());
+  const spentAmount = progress.spent;
+  const budgetAmount = Number(budget.amount) + progress.rolledOverAmount;
+  const pctUsed = budgetAmount > 0 ? (spentAmount / budgetAmount) * 100 : spentAmount > 0 ? 100 : 0;
 
   if (pctUsed >= thresholdPct) {
     await createAlertIfNotOpen({
@@ -113,13 +111,12 @@ async function evaluateBudgetOverTarget(rule: AlertRule): Promise<void> {
 async function evaluateLowBalance(rule: AlertRule): Promise<void> {
   if (!rule.accountId) return;
   const config = rule.config as { floor: number };
-  const account = await prisma.financialAccount.findUnique({
-    where: { id: rule.accountId },
-    include: { transactions: { select: { amount: true } } },
+  const account = await prisma.financialAccount.findFirst({
+    where: { id: rule.accountId, userId: rule.userId, isArchived: false },
   });
   if (!account) return;
 
-  const balance = account.transactions.reduce((sum, t) => sum + Number(t.amount), 0);
+  const balance = (await readAccountBalances(rule.userId, [account])).get(account.id)!.balance;
 
   if (balance < config.floor) {
     await createAlertIfNotOpen({
@@ -253,12 +250,18 @@ async function evaluatePortfolioDrift(rule: AlertRule): Promise<void> {
   const targetRows = await prisma.targetAllocation.findMany({ where: { userId: rule.userId } });
   if (targetRows.length === 0) return;
 
-  const holdings = await prisma.investmentHolding.findMany({
-    where: { account: { userId: rule.userId } },
-  });
-  const latest = latestHoldingsBySymbol(holdings);
+  const [holdings, bucketAssignments] = await Promise.all([
+    readCurrentHoldings(rule.userId),
+    prisma.holdingBucketAssignment.findMany({ where: { userId: rule.userId } }),
+  ]);
+  const overridesBySymbol = new Map(bucketAssignments.map((a) => [a.symbol, a.bucketName]));
+  const latest = holdings;
+  const rates = await readUsdRates();
   const current = computeCurrentAllocation(
-    latest.map((h) => ({ bucketName: bucketLabelForSecurityType(h.securityType), marketValue: Number(h.marketValue) }))
+    latest.map((h) => ({
+      bucketName: resolveBucketName(h.symbol, h.securityType, overridesBySymbol),
+      marketValue: requireConversion(Number(h.marketValue), h.currency, "USD", rates),
+    }))
   );
   const targets = targetRows.map((t) => ({
     bucketName: t.bucketName,

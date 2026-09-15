@@ -1,7 +1,15 @@
+import { readAccountBalances } from "@finance-app/finance-data";
 import Link from "next/link";
-import { Landmark, Receipt, Pin } from "lucide-react";
-import { prisma, type Prisma } from "@finance-app/db";
-import { convertCurrency, summarizeSpendByCategory, type UsdRateMap } from "@finance-app/finance-logic";
+import { Landmark, Receipt, Pin, CalendarClock, Wallet2 } from "lucide-react";
+import { prisma, type Prisma, type AccountType } from "@finance-app/db";
+import {
+  classifyFundingStatus,
+  computeInvestableCash,
+  computeUncommittedCash,
+  convertCurrency,
+  summarizeSpendByCategory,
+  type UsdRateMap,
+} from "@finance-app/finance-logic";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -23,7 +31,6 @@ export default async function DashboardPage() {
     prisma.appUser.findUniqueOrThrow({ where: { id: userId } }),
     prisma.financialAccount.findMany({
       where: { userId, isArchived: false },
-      include: { transactions: { select: { amount: true } } },
     }),
     prisma.transaction.findMany({
       where: { userId },
@@ -42,38 +49,8 @@ export default async function DashboardPage() {
     }),
   ]);
 
-  // IBKR-synced accounts have no Transaction rows at all -- their balance
-  // comes from InvestmentHolding market values instead (latest asOfDate per
-  // symbol). Mirrors accounts/page.tsx's balance computation so net worth
-  // here doesn't silently exclude every brokerage account.
-  const balanceByAccount = new Map<string, number>(
-    accounts.map((a) => [a.id, a.transactions.reduce((sum, t) => sum + Number(t.amount), 0)])
-  );
-
-  // Plaid-synced accounts have a real balance on file (refreshed via
-  // /accounts/balance/get on every sync) that's authoritative over the
-  // transaction sum -- see the identical comment in accounts/page.tsx.
-  for (const a of accounts) {
-    if (a.syncSource === "plaid" && a.currentBalance !== null) {
-      balanceByAccount.set(a.id, Number(a.currentBalance));
-    }
-  }
-
-  const ibkrAccountIds = accounts.filter((a) => a.syncSource === "ibkr_flex").map((a) => a.id);
-  if (ibkrAccountIds.length > 0) {
-    const holdings = await prisma.investmentHolding.findMany({
-      where: { accountId: { in: ibkrAccountIds } },
-    });
-    const latestBySymbol = new Map<string, (typeof holdings)[number]>();
-    for (const h of holdings) {
-      const key = `${h.accountId}:${h.symbol}`;
-      const existing = latestBySymbol.get(key);
-      if (!existing || h.asOfDate > existing.asOfDate) latestBySymbol.set(key, h);
-    }
-    for (const h of latestBySymbol.values()) {
-      balanceByAccount.set(h.accountId, (balanceByAccount.get(h.accountId) ?? 0) + Number(h.marketValue));
-    }
-  }
+  const computedBalances = await readAccountBalances(userId, accounts);
+  const balanceByAccount = new Map([...computedBalances].map(([id, result]) => [id, result.balance]));
 
   const byCurrency = summarizeByClassification(
     accounts.map((account) => ({
@@ -122,9 +99,43 @@ export default async function DashboardPage() {
 
   const isSingleDefaultCurrency = byCurrency.size <= 1 && byCurrency.has(defaultCurrency);
 
+  const [cashReserves, activeObligations] = await Promise.all([
+    prisma.cashReserve.findMany({ where: { userId } }),
+    prisma.obligation.findMany({ where: { userId, isActive: true }, orderBy: { nextDueDate: "asc" } }),
+  ]);
+
+  const CASH_ACCOUNT_TYPES: AccountType[] = ["checking", "savings", "cash"];
+  const cashBalancesByCurrency = new Map<string, number>();
+  for (const account of accounts) {
+    if (account.classification === "asset" && CASH_ACCOUNT_TYPES.includes(account.type)) {
+      const balance = balanceByAccount.get(account.id) ?? 0;
+      cashBalancesByCurrency.set(account.currency, (cashBalancesByCurrency.get(account.currency) ?? 0) + balance);
+    }
+  }
+  const uncommittedCash = computeUncommittedCash(
+    [...cashBalancesByCurrency.entries()].map(([currency, balance]) => ({ currency, balance })),
+    cashReserves.map((r) => ({ currency: r.currency, targetAmount: Number(r.targetAmount) }))
+  );
+  const investableCash = computeInvestableCash(
+    uncommittedCash,
+    activeObligations.map((o) => ({
+      currency: o.currency,
+      amount: Number(o.amount),
+      fundedAmount: Number(o.fundedAmount),
+      priority: o.priority,
+      nextDueDate: o.nextDueDate,
+      isActive: o.isActive,
+    })),
+    now
+  );
+  const upcomingObligations = activeObligations.slice(0, 4);
+
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
+      {accounts.some((a) => a.syncSource === "ibkr_flex") && (
+        <p className="text-sm text-muted-foreground">Brokerage balances include positions only. Unimported brokerage cash is excluded from net worth.</p>
+      )}
 
       {byCurrency.size === 0 ? (
         <EmptyState
@@ -152,6 +163,34 @@ export default async function DashboardPage() {
                     that currency) — this total may be incomplete.
                   </p>
                 )}
+              </CardContent>
+            </Card>
+          )}
+
+          {cashReserves.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Wallet2 className="size-4 text-muted-foreground" />
+                  Reserved vs. available cash
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {[...cashBalancesByCurrency.keys()].map((currency) => (
+                  <div key={currency} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">{currency}</span>
+                    <span className="font-amount">
+                      {formatMoney(uncommittedCash[currency] ?? 0, currency)} uncommitted
+                      {(investableCash[currency] ?? 0) !== (uncommittedCash[currency] ?? 0) && (
+                        <> · {formatMoney(investableCash[currency] ?? 0, currency)} after upcoming bills</>
+                      )}
+                    </span>
+                  </div>
+                ))}
+                <p className="text-xs text-muted-foreground">
+                  Total cash minus your configured reserves (and, where lower, minus mandatory
+                  obligations due in the next 30 days).
+                </p>
               </CardContent>
             </Card>
           )}
@@ -228,6 +267,43 @@ export default async function DashboardPage() {
             {pinnedCategories.map((category) => (
               <PinnedBudgetCard key={category.id} category={category} userId={userId} now={now} />
             ))}
+          </div>
+        </div>
+      )}
+
+      {upcomingObligations.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground uppercase tracking-wide">
+              <CalendarClock className="size-3.5" />
+              Upcoming obligations
+            </h2>
+            <Link href="/planning" className="text-sm text-primary hover:underline">
+              View all
+            </Link>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {upcomingObligations.map((o) => {
+              const amount = Number(o.amount);
+              const fundedAmount = Number(o.fundedAmount);
+              const status = classifyFundingStatus(amount, fundedAmount);
+              return (
+                <Card key={o.id}>
+                  <CardHeader>
+                    <CardTitle className="text-base">{o.name}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <Progress
+                      value={amount > 0 ? Math.min(100, (fundedAmount / amount) * 100) : 0}
+                      indicatorClassName={status === "fully_funded" ? "bg-positive" : "bg-negative"}
+                    />
+                    <p className="font-amount text-sm text-muted-foreground">
+                      {formatMoney(amount, o.currency)} due {o.nextDueDate.toLocaleDateString()}
+                    </p>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </div>
       )}

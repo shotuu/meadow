@@ -91,3 +91,31 @@ export async function unarchiveAccount(accountId: string) {
 
   revalidatePath("/accounts");
 }
+
+export async function setHoldingBucket(formData: FormData) {
+  const userId = await requireUserId();
+
+  const symbol = String(formData.get("symbol") || "").trim();
+  const bucketName = String(formData.get("bucketName") || "").trim();
+
+  if (!symbol) throw new Error("Symbol is required");
+  if (!bucketName) throw new Error("Bucket name is required");
+
+  await prisma.holdingBucketAssignment.upsert({
+    where: { userId_symbol: { userId, symbol } },
+    create: { userId, symbol, bucketName, assignedBy: "user" },
+    update: { bucketName, assignedBy: "user" },
+  });
+
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/holdings/${encodeURIComponent(symbol)}`);
+}
+
+export async function removeHoldingBucket(symbol: string) {
+  const userId = await requireUserId();
+
+  await prisma.holdingBucketAssignment.deleteMany({ where: { userId, symbol } });
+
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/holdings/${encodeURIComponent(symbol)}`);
+}

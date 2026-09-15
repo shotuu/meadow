@@ -1,4 +1,4 @@
-import { prisma } from "@finance-app/db";
+import { withAdvisoryLock, prisma } from "@finance-app/db";
 import { getPlaidClient, callPlaid } from "./client";
 import { upsertPlaidAccounts, refreshPlaidAccountBalances } from "./accounts";
 import { applyCategorizationRules } from "./categorize";
@@ -17,6 +17,10 @@ export interface SyncResult {
  * Plaid; negative = money out here), so amounts are negated on the way in.
  */
 export async function syncPlaidItem(plaidItemId: string): Promise<SyncResult> {
+  return withAdvisoryLock(`plaid-sync:${plaidItemId}`, () => syncUnlocked(plaidItemId));
+}
+
+async function syncUnlocked(plaidItemId: string): Promise<SyncResult> {
   const item = await prisma.plaidItem.findUniqueOrThrow({ where: { id: plaidItemId } });
   const client = getPlaidClient();
   const accessToken = decryptSecret(item.accessToken);

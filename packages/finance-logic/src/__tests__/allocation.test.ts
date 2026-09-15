@@ -4,6 +4,7 @@ import {
   computeCurrentAllocation,
   computePortfolioDrift,
   latestHoldingsBySymbol,
+  resolveBucketName,
 } from "../allocation";
 
 describe("bucketLabelForSecurityType", () => {
@@ -89,14 +90,30 @@ describe("computePortfolioDrift", () => {
   });
 });
 
+describe("resolveBucketName", () => {
+  it("prefers the user's bucket assignment when one exists for the symbol", () => {
+    const overrides = new Map([["IMID", "Core"]]);
+    expect(resolveBucketName("IMID", "STK", overrides)).toBe("Core");
+  });
+
+  it("falls back to the security-type-derived label when no assignment exists", () => {
+    const overrides = new Map([["IMID", "Core"]]);
+    expect(resolveBucketName("AMD", "STK", overrides)).toBe("Stocks");
+  });
+
+  it("falls back correctly with an empty overrides map", () => {
+    expect(resolveBucketName("AMD", "STK", new Map())).toBe("Stocks");
+  });
+});
+
 describe("latestHoldingsBySymbol", () => {
-  it("keeps only the most recent row per (accountId, symbol)", () => {
+  it("excludes symbols missing from the latest complete account report", () => {
     const result = latestHoldingsBySymbol([
       { accountId: "a1", symbol: "AAPL", asOfDate: new Date("2026-01-01"), marketValue: 100 },
       { accountId: "a1", symbol: "AAPL", asOfDate: new Date("2026-02-01"), marketValue: 150 },
       { accountId: "a1", symbol: "MSFT", asOfDate: new Date("2026-01-15"), marketValue: 200 },
     ]);
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(1);
     const aapl = result.find((r) => r.symbol === "AAPL")!;
     expect(aapl.marketValue).toBe(150);
   });

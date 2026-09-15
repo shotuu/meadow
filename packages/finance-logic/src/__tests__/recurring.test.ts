@@ -65,7 +65,7 @@ describe("computeNextExpectedDate", () => {
     // silently overflow into March via naive day-arithmetic.
     const next = computeNextExpectedDate(new Date(Date.UTC(2026, 0, 31)), "monthly");
     expect(next).not.toBeNull();
-    expect(next!.getUTCMonth()).not.toBe(0); // moved out of January
+    expect(next!.toISOString().slice(0, 10)).toBe("2026-02-28");
   });
 
   it("rolls a December annual charge into the following January correctly", () => {

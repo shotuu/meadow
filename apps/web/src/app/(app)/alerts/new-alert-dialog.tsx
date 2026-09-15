@@ -25,7 +25,7 @@ const RULE_TYPES = [
   { value: "budget_over_target", label: "Budget over target", needsCategory: true, needsAccount: false, valueLabel: "Alert at % of budget spent", valueDefault: "100" },
   { value: "low_balance", label: "Low balance", needsCategory: false, needsAccount: true, valueLabel: "Floor amount", valueDefault: "0" },
   { value: "emergency_fund_below_floor", label: "Emergency fund below floor", needsCategory: false, needsAccount: true, valueLabel: "Floor amount", valueDefault: "0" },
-  { value: "large_transaction", label: "Large transaction", needsCategory: false, needsAccount: false, valueLabel: "Threshold amount", valueDefault: "0" },
+  { value: "large_transaction", label: "Large transaction", needsCategory: false, needsAccount: false, valueLabel: "Threshold amount", valueDefault: "" },
   { value: "recurring_missed", label: "Recurring charge missed", needsCategory: false, needsAccount: false, valueLabel: null, valueDefault: "" },
   { value: "recurring_amount_changed", label: "Recurring amount changed", needsCategory: false, needsAccount: false, valueLabel: null, valueDefault: "" },
   { value: "sinking_fund_underfunded", label: "Sinking fund underfunded", needsCategory: true, needsAccount: false, valueLabel: "Warn when fewer than N months left", valueDefault: "1" },
@@ -124,6 +124,8 @@ export function NewAlertDialog({ accounts, categories }: { accounts: Account[]; 
                 name="value"
                 type="number"
                 step="any"
+                min={ruleType === "large_transaction" ? "0.01" : undefined}
+                required={ruleType === "large_transaction"}
                 defaultValue={meta.valueDefault}
               />
             </div>

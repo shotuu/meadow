@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma, type AlertRuleType } from "@finance-app/db";
+import { prisma, AlertRuleType } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 
 export async function createAlertRule(formData: FormData) {
@@ -12,7 +12,10 @@ export async function createAlertRule(formData: FormData) {
   const valueRaw = formData.get("value");
   const value = valueRaw !== null && valueRaw !== "" ? Number(valueRaw) : undefined;
 
-  if (!ruleType) throw new Error("Rule type is required");
+  if (!Object.values(AlertRuleType).includes(ruleType)) throw new Error("Invalid rule type");
+  if (value !== undefined && !Number.isFinite(value)) throw new Error("Value must be finite");
+  if (accountId) await prisma.financialAccount.findFirstOrThrow({ where: { id: accountId, userId } });
+  if (categoryId) await prisma.category.findFirstOrThrow({ where: { id: categoryId, userId } });
 
   let config: Record<string, number> = {};
   switch (ruleType) {
@@ -24,7 +27,8 @@ export async function createAlertRule(formData: FormData) {
       config = { floor: value ?? 0 };
       break;
     case "large_transaction":
-      config = { threshold: value ?? 0 };
+      if (value === undefined || value <= 0) throw new Error("Threshold amount must be greater than 0");
+      config = { threshold: value };
       break;
     case "sinking_fund_underfunded":
       config = { warningPeriods: value ?? 1 };

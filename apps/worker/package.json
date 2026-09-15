@@ -10,13 +10,15 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@finance-app/balance-snapshots": "workspace:*",
     "@finance-app/db": "workspace:*",
     "@finance-app/finance-logic": "workspace:*",
     "@finance-app/plaid-sync": "workspace:*",
     "@finance-app/ibkr-sync": "workspace:*",
     "@finance-app/finverse-sync": "workspace:*",
     "@finance-app/categorization-ai": "workspace:*",
-    "node-cron": "^4.6.0"
+    "node-cron": "^4.6.0",
+    "@finance-app/finance-data": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

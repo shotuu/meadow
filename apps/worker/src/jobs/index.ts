@@ -1,20 +1,17 @@
-/**
- * Job stubs matching the phased build order in the architecture plan.
- * Each becomes a real implementation in its listed phase — kept as explicit
- * no-ops until then rather than building ahead of the schema it depends on.
- */
-
 import { prisma } from "@finance-app/db";
 import { syncPlaidItem } from "@finance-app/plaid-sync";
 import { syncIbkrFlexConfig } from "@finance-app/ibkr-sync";
 import { syncFinverseConnection } from "@finance-app/finverse-sync";
 import { runCategorizationBatchForAllUsers } from "@finance-app/categorization-ai";
+import { snapshotAccountBalancesForAllUsers } from "@finance-app/balance-snapshots";
 import { recomputeRecurringSeriesForAllUsers } from "./recurring.js";
 import { refreshExchangeRates as refreshExchangeRatesImpl } from "./exchange-rates.js";
 import { evaluateAlertRulesForAllUsers } from "./alerts.js";
+import { matchTransfersForAllUsers } from "./transfer-matching.js";
 
 export async function syncPlaidAccounts(): Promise<void> {
   const items = await prisma.plaidItem.findMany({ where: { status: "active" } });
+  const failures: unknown[] = [];
   for (const item of items) {
     try {
       const result = await syncPlaidItem(item.id);
@@ -22,13 +19,16 @@ export async function syncPlaidAccounts(): Promise<void> {
         `[worker] syncPlaidAccounts: item ${item.id} — +${result.added} ~${result.modified} -${result.removed}`
       );
     } catch (err) {
+      failures.push(err);
       console.error(`[worker] syncPlaidAccounts: item ${item.id} failed`, err);
     }
   }
+  if (failures.length) throw new AggregateError(failures, "Provider sync incomplete");
 }
 
 export async function syncIbkrFlexAccounts(): Promise<void> {
   const configs = await prisma.ibkrFlexConfig.findMany({ where: { status: "active" } });
+  const failures: unknown[] = [];
   for (const config of configs) {
     try {
       const result = await syncIbkrFlexConfig(config.id);
@@ -36,13 +36,16 @@ export async function syncIbkrFlexAccounts(): Promise<void> {
         `[worker] syncIbkrFlexAccounts: config ${config.id} — ${result.holdings} holdings, ${result.transactions} transactions`
       );
     } catch (err) {
+      failures.push(err);
       console.error(`[worker] syncIbkrFlexAccounts: config ${config.id} failed`, err);
     }
   }
+  if (failures.length) throw new AggregateError(failures, "Provider sync incomplete");
 }
 
 export async function syncFinverseAccounts(): Promise<void> {
   const connections = await prisma.finverseConnection.findMany({ where: { status: "active" } });
+  const failures: unknown[] = [];
   for (const connection of connections) {
     try {
       const result = await syncFinverseConnection(connection.id);
@@ -50,9 +53,11 @@ export async function syncFinverseAccounts(): Promise<void> {
         `[worker] syncFinverseAccounts: connection ${connection.id} — ${result.accounts} accounts, +${result.added} transactions`
       );
     } catch (err) {
+      failures.push(err);
       console.error(`[worker] syncFinverseAccounts: connection ${connection.id} failed`, err);
     }
   }
+  if (failures.length) throw new AggregateError(failures, "Provider sync incomplete");
 }
 
 export async function runCategorizationBatch(): Promise<void> {
@@ -72,4 +77,14 @@ export async function evaluateAlertRules(): Promise<void> {
 
 export async function refreshExchangeRates(): Promise<void> {
   await refreshExchangeRatesImpl();
+}
+
+export async function computeBalanceSnapshots(): Promise<void> {
+  await snapshotAccountBalancesForAllUsers();
+  console.log("[worker] computeBalanceSnapshots: done");
+}
+
+export async function matchTransfers(): Promise<void> {
+  await matchTransfersForAllUsers();
+  console.log("[worker] matchTransfers: done");
 }

@@ -55,13 +55,16 @@ interface AiSuggestion {
  */
 export async function runCategorizationBatchForAllUsers(): Promise<void> {
   const userIds = await prisma.appUser.findMany({ select: { id: true } });
+  const failures: unknown[] = [];
   for (const { id: userId } of userIds) {
     try {
       await runCategorizationBatchForUser(userId);
     } catch (err) {
+      failures.push(err);
       console.error(`[categorization-ai] user ${userId} failed`, err);
     }
   }
+  if (failures.length) throw new AggregateError(failures, "User job incomplete");
 }
 
 export async function runCategorizationBatchForUser(userId: string): Promise<void> {
@@ -74,7 +77,7 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
       where: { userId, categorySource: "uncategorized", isTransfer: false },
       select: { id: true, description: true, merchantName: true, amount: true },
       take: BATCH_SIZE,
-      orderBy: { date: "desc" },
+      orderBy: [{ categorizationAttemptedAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],
     }),
     // Past manual confirmations/corrections, given to the model as
     // precedent -- the exact-merchant rule engine (recordCategoryCorrection)
@@ -92,6 +95,10 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
   if (transactions.length === 0 || categories.length === 0) return;
 
   const ai = getClient();
+  await prisma.transaction.updateMany({
+    where: { userId, id: { in: transactions.map((t) => t.id) }, categorySource: "uncategorized", isTransfer: false },
+    data: { categorizationAttemptedAt: new Date() },
+  });
   const response = await ai.models.generateContent({
     model: MODEL,
     contents: JSON.stringify({
@@ -133,6 +140,7 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
   let suggestions: AiSuggestion[];
   try {
     suggestions = JSON.parse(text);
+    if (!Array.isArray(suggestions)) throw new Error("Expected an array");
   } catch {
     console.error(`[categorization-ai] unparseable response for user ${userId}`);
     return;
@@ -142,12 +150,14 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
   const validTransactionIds = new Set(transactions.map((t) => t.id));
 
   for (const s of suggestions) {
+    if (!s || typeof s !== "object" || !Number.isFinite(s.confidence)) continue;
     if (!validTransactionIds.has(s.transactionId)) continue;
+    validTransactionIds.delete(s.transactionId);
     if (s.categoryId === "none" || !validCategoryIds.has(s.categoryId)) continue;
     const confidence = Math.max(0, Math.min(1, s.confidence));
 
-    await prisma.transaction.update({
-      where: { id: s.transactionId },
+    await prisma.transaction.updateMany({
+      where: { id: s.transactionId, userId, categorySource: "uncategorized", isTransfer: false },
       data: { categoryId: s.categoryId, categorySource: "ai", categoryConfidence: confidence },
     });
   }

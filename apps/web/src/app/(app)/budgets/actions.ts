@@ -20,28 +20,27 @@ export async function setBudget(formData: FormData) {
 
   await prisma.category.findFirstOrThrow({ where: { id: categoryId, userId } });
 
+  if (!Object.values(BudgetPeriod).includes(period)) throw new Error("Invalid budget period");
   const today = getPeriodRange(period, new Date()).start;
   const yesterday = new Date(today);
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 
-  await prisma.$transaction([
-    prisma.budget.updateMany({
-      where: { categoryId, userId, effectiveTo: null },
-      data: { effectiveTo: yesterday },
-    }),
-    prisma.budget.create({
-      data: {
-        userId,
-        categoryId,
-        amount,
-        currency,
-        period,
-        rolloverEnabled,
-        rolloverCap,
-        effectiveFrom: today,
-      },
-    }),
-  ]);
+  if (!Object.values(BudgetPeriod).includes(period)) throw new Error("Invalid budget period");
+  if (rolloverCap !== null && (!Number.isFinite(rolloverCap) || rolloverCap < 0)) throw new Error("Invalid rollover cap");
+  await prisma.$transaction(async (db) => {
+    await db.$queryRaw`SELECT id FROM app.categories WHERE id = ${categoryId} AND user_id = ${userId} FOR UPDATE`;
+    const active = await db.budget.findFirst({ where: { categoryId, userId, effectiveTo: null } });
+    if (active && (active.period !== period || active.currency !== currency)) {
+      throw new Error("Keep the existing budget period and currency to preserve its history");
+    }
+    const data = { amount, currency, period, rolloverEnabled, rolloverCap };
+    if (active && active.effectiveFrom.getTime() === today.getTime()) {
+      await db.budget.update({ where: { id: active.id }, data });
+    } else {
+      await db.budget.updateMany({ where: { categoryId, userId, effectiveTo: null }, data: { effectiveTo: yesterday } });
+      await db.budget.create({ data: { userId, categoryId, ...data, effectiveFrom: today } });
+    }
+  });
 
   revalidatePath("/budgets");
 }

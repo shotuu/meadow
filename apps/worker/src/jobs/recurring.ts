@@ -45,33 +45,61 @@ interface Occurrence {
  */
 export async function recomputeRecurringSeriesForAllUsers(): Promise<void> {
   const userIds = await prisma.appUser.findMany({ select: { id: true } });
+  const failures: unknown[] = [];
   for (const { id: userId } of userIds) {
     try {
       await recomputeRecurringSeriesForUser(userId);
     } catch (err) {
+      failures.push(err);
       console.error(`[worker] recomputeRecurringSeries: user ${userId} failed`, err);
     }
   }
+  if (failures.length) throw new AggregateError(failures, "User job incomplete");
 }
 
-async function recomputeRecurringSeriesForUser(userId: string): Promise<void> {
+export async function recomputeRecurringSeriesForUser(userId: string): Promise<void> {
   const transactions = await prisma.transaction.findMany({
-    where: { userId, isTransfer: false, merchantName: { not: null } },
-    select: { id: true, merchantName: true, amount: true, currency: true, date: true, categoryId: true },
+    where: { userId, isTransfer: false, pending: false, merchantName: { not: null } },
+    select: { id: true, accountId: true, merchantName: true, amount: true, currency: true, date: true, categoryId: true },
     orderBy: { date: "asc" },
   });
 
   const groups = new Map<string, Occurrence[]>();
   for (const tx of transactions) {
-    const key = normalizeMerchantKey(tx.merchantName!);
-    if (!key) continue;
+    const merchant = normalizeMerchantKey(tx.merchantName!);
+    if (!merchant) continue;
+    const key = JSON.stringify([merchant, tx.accountId, tx.currency, Number(tx.amount) < 0 ? "expense" : "income"]);
     const group = groups.get(key) ?? [];
     group.push({ id: tx.id, amount: Number(tx.amount), currency: tx.currency, date: tx.date, categoryId: tx.categoryId });
     groups.set(key, group);
   }
 
   const existingSeries = await prisma.recurringSeries.findMany({ where: { userId } });
-  const existingByKey = new Map(existingSeries.map((s) => [s.merchantKey, s]));
+  // Preserve the identity/history of old merchant-only series. When the
+  // merchant now spans multiple groups (a new account, a currency change),
+  // inherit into whichever group's most recent occurrence is closest to
+  // this series' own last-seen date, rather than leaving the series
+  // permanently orphaned (unreachable by any groupKey lookup below) and
+  // later cancelling a subscription that's actually still active, just
+  // split across untracked groups.
+  for (const series of existingSeries.filter((s) => s.groupKey === null)) {
+    const matchingKeys = [...groups.keys()].filter((key) => JSON.parse(key)[0] === series.merchantKey);
+    let chosenKey: string | undefined;
+    if (matchingKeys.length === 1) {
+      chosenKey = matchingKeys[0];
+    } else if (matchingKeys.length > 1) {
+      chosenKey = [...matchingKeys].sort((a, b) => {
+        const aLast = groups.get(a)!.at(-1)!.date.getTime();
+        const bLast = groups.get(b)!.at(-1)!.date.getTime();
+        return Math.abs(aLast - series.lastSeenDate.getTime()) - Math.abs(bLast - series.lastSeenDate.getTime());
+      })[0];
+    }
+    if (chosenKey) {
+      series.groupKey = chosenKey;
+      await prisma.recurringSeries.update({ where: { id: series.id }, data: { groupKey: chosenKey } });
+    }
+  }
+  const existingByKey = new Map(existingSeries.map((s) => [s.groupKey ?? s.merchantKey, s]));
   const now = new Date();
 
   for (const [merchantKey, occurrences] of groups) {
@@ -112,12 +140,10 @@ async function recomputeRecurringSeriesForUser(userId: string): Promise<void> {
       const oldAmount = Number(existing.expectedAmount);
       const changeRatio = oldAmount === 0 ? 0 : Math.abs(expectedAmount - oldAmount) / Math.abs(oldAmount);
       if (changeRatio > tolerance) {
-        events.push({ eventType: expectedAmount < oldAmount ? "amount_decreased" : "amount_increased" });
+        events.push({ eventType: Math.abs(expectedAmount) < Math.abs(oldAmount) ? "amount_decreased" : "amount_increased" });
         status = "amount_changed";
       }
-      if (existing.status === "missed") {
-        events.push({ eventType: "resumed" });
-      }
+
     }
 
     if (nextExpectedDate && isMissed(nextExpectedDate, result.cadence, now)) {
@@ -127,11 +153,16 @@ async function recomputeRecurringSeriesForUser(userId: string): Promise<void> {
       }
     }
 
+    if (existing?.status === "missed" && status !== "missed" && lastSeenDate > existing.lastSeenDate) {
+      events.push({ eventType: "resumed" });
+    }
+
     const series = await prisma.recurringSeries.upsert({
-      where: { userId_merchantKey: { userId, merchantKey } },
+      where: { userId_groupKey: { userId, groupKey: merchantKey } },
       create: {
         userId,
-        merchantKey,
+        merchantKey: JSON.parse(merchantKey)[0] as string,
+        groupKey: merchantKey,
         categoryId,
         cadence,
         expectedAmount,
@@ -164,8 +195,11 @@ async function recomputeRecurringSeriesForUser(userId: string): Promise<void> {
       });
     }
 
+    await prisma.recurringSeriesTransaction.deleteMany({
+      where: { recurringSeriesId: series.id, transactionId: { notIn: occurrences.map((o) => o.id) } },
+    });
     const alreadyLinked = await prisma.recurringSeriesTransaction.findMany({
-      where: { transactionId: { in: occurrences.map((o) => o.id) } },
+      where: { recurringSeriesId: series.id, transactionId: { in: occurrences.map((o) => o.id) } },
       select: { transactionId: true },
     });
     const linkedIds = new Set(alreadyLinked.map((l) => l.transactionId));

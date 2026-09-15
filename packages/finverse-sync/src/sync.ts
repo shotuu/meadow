@@ -1,4 +1,4 @@
-import { prisma } from "@finance-app/db";
+import { withAdvisoryLock, prisma } from "@finance-app/db";
 import { decryptSecret } from "@finance-app/crypto";
 import type { LoginIdentityApi } from "@finverse/sdk-typescript";
 import { getFinverseLoginIdentityApi, callFinverse } from "./client";
@@ -55,6 +55,10 @@ async function waitForDataReady(api: LoginIdentityApi): Promise<void> {
  * imported.
  */
 export async function syncFinverseConnection(connectionId: string): Promise<SyncResult> {
+  return withAdvisoryLock(`finverse-sync:${connectionId}`, () => syncUnlocked(connectionId));
+}
+
+async function syncUnlocked(connectionId: string): Promise<SyncResult> {
   const connection = await prisma.finverseConnection.findUniqueOrThrow({ where: { id: connectionId } });
   const accessToken = decryptSecret(connection.accessToken);
   const api = getFinverseLoginIdentityApi(accessToken);
@@ -88,7 +92,28 @@ export async function syncFinverseConnection(connectionId: string): Promise<Sync
       const existing = await prisma.transaction.findUnique({
         where: { accountId_externalTransactionId: { accountId, externalTransactionId: tx.transaction_id } },
       });
-      if (existing) continue;
+      const refreshed = {
+        amount: tx.amount.value, currency: tx.amount.currency || "SGD",
+        description: tx.description || tx.merchant_name || "Transaction",
+        merchantName: tx.merchant_name ?? null, date: new Date(tx.posted_date), pending: tx.is_pending ?? false,
+      };
+      if (!Number.isFinite(Number(refreshed.amount)) || !Number.isFinite(refreshed.date.getTime())) {
+        throw new Error("Invalid Finverse transaction amount or date");
+      }
+      if (existing) {
+        // Unlike Plaid's delta feed, which only reports transactions that
+        // actually changed, Finverse's full re-pull returns every
+        // transaction every run. Only refresh a transaction still pending
+        // in our own records (catching a real pending -> posted
+        // transition, the same class of update Plaid's "modified" delta
+        // covers) and never one already resolved as a transfer -- a
+        // settled or transfer-reconciled row must not be silently
+        // rewritten by a provider re-pull with no audit trail.
+        if (existing.pending && !existing.isTransfer) {
+          await prisma.transaction.update({ where: { id: existing.id }, data: refreshed });
+        }
+        continue;
+      }
 
       const description = tx.description || tx.merchant_name || "Transaction";
       const merchantName = tx.merchant_name ?? null;

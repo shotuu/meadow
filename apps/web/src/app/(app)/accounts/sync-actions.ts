@@ -6,6 +6,7 @@ import { syncPlaidItem } from "@finance-app/plaid-sync";
 import { syncIbkrFlexConfig } from "@finance-app/ibkr-sync";
 import { syncFinverseConnection } from "@finance-app/finverse-sync";
 import { runCategorizationBatchForUser } from "@finance-app/categorization-ai";
+import { snapshotAccountBalancesForUser } from "@finance-app/balance-snapshots";
 import { requireUserId } from "@/lib/session";
 
 export interface SyncNowResult {
@@ -69,6 +70,14 @@ export async function syncAllAccounts(): Promise<SyncNowResult> {
     await runCategorizationBatchForUser(userId);
   } catch (err) {
     errors.push(`Categorization: ${err instanceof Error ? err.message : "failed"}`);
+  }
+
+  // Capture today's balance snapshot immediately rather than waiting for the
+  // nightly cron -- idempotent (upserts on account+day), safe to re-trigger.
+  try {
+    await snapshotAccountBalancesForUser(userId);
+  } catch (err) {
+    errors.push(`Balance snapshot: ${err instanceof Error ? err.message : "failed"}`);
   }
 
   revalidatePath("/accounts");

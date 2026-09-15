@@ -1,6 +1,10 @@
 import { prisma, type AccountType as OurAccountType, type AccountClassification } from "@finance-app/db";
 import { AccountType as PlaidAccountType, AccountSubtype, type AccountBase } from "plaid";
 
+export function signedPlaidBalance(balance: number, type: PlaidAccountType): number {
+  return type === PlaidAccountType.Credit || type === PlaidAccountType.Loan ? -balance : balance;
+}
+
 const LIABILITY_TYPES: OurAccountType[] = ["credit_card", "loan"];
 
 function classificationForType(type: OurAccountType): AccountClassification {
@@ -55,7 +59,8 @@ export async function upsertPlaidAccounts(
         syncSource: "plaid",
         externalAccountId: account.account_id,
         ...(account.balances.current != null && {
-          currentBalance: account.balances.current,
+          currentBalance: signedPlaidBalance(account.balances.current, account.type),
+          balanceIsCanonical: true,
           balanceAsOf: new Date(),
         }),
       },
@@ -81,7 +86,8 @@ export async function refreshPlaidAccountBalances(userId: string, plaidAccounts:
     if (account.balances.current == null) continue;
     await prisma.financialAccount.updateMany({
       where: { userId, syncSource: "plaid", externalAccountId: account.account_id },
-      data: { currentBalance: account.balances.current, balanceAsOf: now },
+      data: { currentBalance: signedPlaidBalance(account.balances.current, account.type),
+          balanceIsCanonical: true, balanceAsOf: now },
     });
   }
 }

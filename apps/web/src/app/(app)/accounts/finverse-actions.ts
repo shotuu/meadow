@@ -1,8 +1,7 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
-import { revalidatePath } from "next/cache";
-import { createFinverseLinkUrl, linkFinverseConnection } from "@finance-app/finverse-sync";
+import { createFinverseState } from "@/lib/finverse-state";
+import { createFinverseLinkUrl } from "@finance-app/finverse-sync";
 import { requireUserId } from "@/lib/session";
 
 function redirectUri(): string {
@@ -17,16 +16,5 @@ function redirectUri(): string {
  */
 export async function startFinverseLink(): Promise<string> {
   const userId = await requireUserId();
-  return createFinverseLinkUrl(userId, redirectUri(), randomUUID());
-}
-
-export async function completeFinverseLink(code: string) {
-  const userId = await requireUserId();
-  const { sync } = await linkFinverseConnection(userId, code, redirectUri());
-
-  revalidatePath("/accounts");
-  revalidatePath("/transactions");
-  revalidatePath("/dashboard");
-
-  return sync;
+  return createFinverseLinkUrl(userId, redirectUri(), await createFinverseState(userId));
 }

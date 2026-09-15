@@ -1,4 +1,4 @@
-import { bucketLabelForSecurityType, computeCurrentAllocation, computePortfolioDrift } from "@finance-app/finance-logic";
+import { computeCurrentAllocation, computePortfolioDrift, resolveBucketName } from "@finance-app/finance-logic";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
@@ -8,12 +8,18 @@ import { DeleteTargetAllocationButton } from "./delete-target-allocation-button"
 export function TargetAllocationSection({
   holdings,
   targets,
+  bucketAssignments,
 }: {
-  holdings: { securityType: string; marketValue: number }[];
+  holdings: { symbol: string; securityType: string; marketValue: number }[];
   targets: { bucketName: string; targetWeightPct: number; driftThresholdPct: number }[];
+  bucketAssignments: { symbol: string; bucketName: string }[];
 }) {
+  const overridesBySymbol = new Map(bucketAssignments.map((a) => [a.symbol, a.bucketName]));
   const current = computeCurrentAllocation(
-    holdings.map((h) => ({ bucketName: bucketLabelForSecurityType(h.securityType), marketValue: h.marketValue }))
+    holdings.map((h) => ({
+      bucketName: resolveBucketName(h.symbol, h.securityType, overridesBySymbol),
+      marketValue: h.marketValue,
+    }))
   );
   const drift = computePortfolioDrift(current, targets);
   const driftByBucket = new Map(drift.map((d) => [d.bucketName, d]));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AccountType as PlaidAccountType, AccountSubtype } from "plaid";
-import { mapAccountType } from "../accounts";
+import { mapAccountType, signedPlaidBalance } from "../accounts";
 
 describe("mapAccountType", () => {
   it("maps a depository/checking account to checking", () => {
@@ -30,5 +30,14 @@ describe("mapAccountType", () => {
 
   it("falls back to other for an unrecognized type", () => {
     expect(mapAccountType(PlaidAccountType.Other, null)).toBe("other");
+  });
+});
+
+describe("canonical Plaid balances", () => {
+  it("negates debt and preserves lender credits", () => {
+    expect(signedPlaidBalance(1000, PlaidAccountType.Credit)).toBe(-1000);
+    expect(signedPlaidBalance(-25, PlaidAccountType.Credit)).toBe(25);
+    expect(signedPlaidBalance(1000, PlaidAccountType.Loan)).toBe(-1000);
+    expect(signedPlaidBalance(-25, PlaidAccountType.Depository)).toBe(-25);
   });
 });

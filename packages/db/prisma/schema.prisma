@@ -103,6 +103,11 @@ model AppUser {
   plaidItems            PlaidItem[]
   finverseConnections   FinverseConnection[]
   transactions          Transaction[]
+  accountBalanceSnapshots AccountBalanceSnapshot[]
+  transferMatchCandidates TransferMatchCandidate[]
+  obligations             Obligation[]
+  incomeStreams           IncomeStream[]
+  cashReserves            CashReserve[]
 
   @@map("users")
   @@schema("app")
@@ -185,6 +190,7 @@ model FinancialAccount {
   // source of truth to prefer for them.
   currentBalance     Decimal?               @map("current_balance") @db.Decimal(18, 4)
   balanceAsOf        DateTime?              @map("balance_as_of")
+  balanceIsCanonical Boolean @default(false) @map("balance_is_canonical")
 
   user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -195,9 +201,55 @@ model FinancialAccount {
   investmentTransactions InvestmentTransaction[]
   importBatches         ImportBatch[]
   alertRules            AlertRule[]
+  balanceSnapshots      AccountBalanceSnapshot[]
+  obligations           Obligation[]
+  incomeStreams         IncomeStream[]
+  cashReserves          CashReserve[]
 
   @@index([userId])
   @@map("accounts")
+  @@schema("app")
+}
+
+// =========================================================================
+// Balance history
+// =========================================================================
+
+enum BalanceCalculationMethod {
+  transaction_sum
+  institution_reported
+  holdings_derived
+
+  @@schema("app")
+}
+
+// One row per account per day, upserted so re-running the same day updates
+// in place rather than duplicating. `method` records how `balance` was
+// derived that day (see computeAccountBalance in @finance-app/finance-logic)
+// so a downstream consumer (e.g. an AI export) knows whether a given day's
+// number is institution-reported, holdings-derived, or a transaction-sum
+// fallback -- the same three-tier precedence already used live on the
+// Accounts and Dashboard pages, just persisted daily instead of recomputed
+// only for "today."
+model AccountBalanceSnapshot {
+  id        String                    @id @default(cuid())
+  accountId String                    @map("account_id")
+  userId    String                    @map("user_id")
+  asOfDate  DateTime                  @map("as_of_date") @db.Date
+  balance   Decimal                   @db.Decimal(18, 4)
+  currency  String
+  method    BalanceCalculationMethod
+  sourceAsOf DateTime? @map("source_as_of")
+  recordedAt DateTime @default(now()) @map("recorded_at")
+  isComplete Boolean @default(false) @map("is_complete")
+  valuationVersion Int @default(1) @map("valuation_version")
+
+  account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    AppUser          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, asOfDate])
+  @@index([userId, asOfDate])
+  @@map("account_balance_snapshots")
   @@schema("app")
 }
 
@@ -275,6 +327,7 @@ model Transaction {
   authorizedDate        DateTime?      @map("authorized_date") @db.Date
   categoryId            String?        @map("category_id")
   categoryConfidence    Decimal?       @map("category_confidence") @db.Decimal(4, 3)
+  categorizationAttemptedAt DateTime? @map("categorization_attempted_at")
   categorySource        CategorySource @default(uncategorized) @map("category_source")
   isTransfer            Boolean        @default(false) @map("is_transfer")
   transferPairId        String?        @unique @map("transfer_pair_id")
@@ -290,9 +343,17 @@ model Transaction {
   transferPair Transaction?      @relation("TransferPair", fields: [transferPairId], references: [id])
   transferOf   Transaction?      @relation("TransferPair")
 
-  splits               TransactionSplit[]
-  sinkingFundContribs  SinkingFundContribution[]
-  recurringSeriesLinks RecurringSeriesTransaction[]
+  // Set when this transaction was reconciled against an IBKR deposit/withdrawal
+  // (InvestmentTransaction) rather than another bank Transaction -- see
+  // TransferMatchCandidate. InvestmentTransaction has no relation back to
+  // Transaction otherwise, since IBKR accounts have zero Transaction rows.
+  linkedInvestmentTransactionId String?                @unique @map("linked_investment_transaction_id")
+  linkedInvestmentTransaction   InvestmentTransaction? @relation(fields: [linkedInvestmentTransactionId], references: [id])
+
+  splits                  TransactionSplit[]
+  sinkingFundContribs     SinkingFundContribution[]
+  recurringSeriesLinks    RecurringSeriesTransaction[]
+  transferMatchCandidates TransferMatchCandidate[]
 
   @@unique([accountId, externalTransactionId])
   @@index([userId, date(sort: Desc)])
@@ -321,6 +382,52 @@ model TransactionSplit {
 
   @@index([transactionId])
   @@map("transaction_splits")
+  @@schema("app")
+}
+
+enum TransferCounterpartType {
+  transaction
+  investment_transaction
+
+  @@schema("app")
+}
+
+enum TransferMatchStatus {
+  pending
+  confirmed
+  dismissed
+
+  @@schema("app")
+}
+
+// A candidate pairing proposed by the nightly transfer-matching job for a
+// synced transaction that looks like an internal transfer (Plaid/IBKR/
+// Finverse/CSV transactions are never auto-flagged as transfers the way a
+// manually-entered one can be). `transactionId` is always a real bank
+// Transaction (the "anchor" -- for a Transaction<->Transaction pair, the
+// outflow side is always the anchor, a fixed rule so the same real pair is
+// never proposed twice). The counterpart is polymorphic (mirrors the
+// AlertEvent.relatedEntityType/relatedEntityId pattern already used
+// elsewhere in this schema) since it can be either another Transaction or
+// an InvestmentTransaction (IBKR deposit/withdrawal), which has no typed
+// relation to Transaction at all.
+model TransferMatchCandidate {
+  id              String                  @id @default(cuid())
+  userId          String                  @map("user_id")
+  transactionId   String                  @map("transaction_id")
+  counterpartType TransferCounterpartType @map("counterpart_type")
+  counterpartId   String                  @map("counterpart_id")
+  confidenceScore Decimal                 @map("confidence_score") @db.Decimal(4, 3)
+  status          TransferMatchStatus     @default(pending)
+  detectedAt      DateTime                @default(now()) @map("detected_at")
+  resolvedAt      DateTime?               @map("resolved_at")
+
+  user        AppUser     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@unique([transactionId, counterpartType, counterpartId])
+  @@index([userId, status])
+  @@map("transfer_match_candidates")
   @@schema("app")
 }
 
@@ -371,6 +478,7 @@ model Category {
   prepaidCoverage    PrepaidCoverage?
   categorizationRules CategorizationRule[]
   recurringSeries    RecurringSeries[]
+  obligations        Obligation[]
 
   @@index([userId])
   @@map("categories")
@@ -553,6 +661,7 @@ model RecurringSeries {
   id                 String           @id @default(cuid())
   userId             String           @map("user_id")
   merchantKey        String           @map("merchant_key")
+  groupKey           String?          @map("group_key")
   categoryId         String?          @map("category_id")
   cadence            RecurringCadence
   expectedAmount     Decimal          @map("expected_amount") @db.Decimal(18, 4)
@@ -569,7 +678,7 @@ model RecurringSeries {
   transactions RecurringSeriesTransaction[]
   events       RecurringSeriesEvent[]
 
-  @@unique([userId, merchantKey])
+  @@unique([userId, groupKey])
   @@map("recurring_series")
   @@schema("app")
 }
@@ -676,6 +785,11 @@ model InvestmentTransaction {
 
   account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
+  // Reverse side of Transaction.linkedInvestmentTransactionId -- set when a
+  // bank Transaction (e.g. a brokerage-funding withdrawal) has been
+  // reconciled against this deposit/withdrawal row via TransferMatchCandidate.
+  linkedFromTransaction Transaction?
+
   @@unique([accountId, externalId])
   @@map("investment_transactions")
   @@schema("app")
@@ -774,6 +888,122 @@ model AlertEvent {
 }
 
 // =========================================================================
+// Planning — future obligations, expected income, reserved cash
+// =========================================================================
+
+// Deliberately separate from RecurringCadence (used by RecurringSeries,
+// which is an auto-detected backward-looking pattern from transaction
+// history, not a user-declared future commitment): this needs one_time and
+// semiannual, and has no use for RecurringCadence's irregular value. Shared
+// between Obligation and IncomeStream rather than duplicated.
+enum ObligationFrequency {
+  one_time
+  weekly
+  biweekly
+  monthly
+  quarterly
+  semiannual
+  annual
+
+  @@schema("app")
+}
+
+enum ObligationPriority {
+  mandatory
+  planned
+  discretionary
+
+  @@schema("app")
+}
+
+// A user-declared future bill/commitment (car insurance, housing, a planned
+// large purchase). fundedAmount is manually tracked the same way
+// SinkingFund.currentBalance already is -- not derived from transactions,
+// since matching a real payment to an obligation reliably isn't something
+// this app's categorization can do. Funding status
+// (unfunded/partially_funded/fully_funded) is computed live from amount vs.
+// fundedAmount (see classifyFundingStatus in @finance-app/finance-logic),
+// not stored, matching PrepaidCoverage's existing convention of computing
+// status on read rather than caching it.
+model Obligation {
+  id           String              @id @default(cuid())
+  userId       String              @map("user_id")
+  name         String
+  amount       Decimal             @db.Decimal(18, 4)
+  currency     String
+  frequency    ObligationFrequency
+  nextDueDate  DateTime            @map("next_due_date") @db.Date
+  priority     ObligationPriority  @default(planned)
+  fundedAmount Decimal             @default(0) @map("funded_amount") @db.Decimal(18, 4)
+  accountId    String?             @map("account_id")
+  categoryId   String?             @map("category_id")
+  isActive     Boolean             @default(true) @map("is_active")
+
+  user     AppUser           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  FinancialAccount? @relation(fields: [accountId], references: [id])
+  category Category?         @relation(fields: [categoryId], references: [id])
+
+  @@index([userId])
+  @@map("obligations")
+  @@schema("app")
+}
+
+enum IncomeConfidence {
+  confirmed
+  estimated
+
+  @@schema("app")
+}
+
+// A user-declared forward-looking income schedule (salary, an allowance, a
+// fixed-term job) -- distinct from the actual received Transaction rows,
+// which this app has no itemized payroll (gross/deductions/net) breakdown
+// for yet (see the dead TransactionSplit model).
+model IncomeStream {
+  id               String              @id @default(cuid())
+  userId           String              @map("user_id")
+  name             String
+  currency         String
+  frequency        ObligationFrequency
+  grossAmount      Decimal             @map("gross_amount") @db.Decimal(18, 4)
+  netAmount        Decimal?            @map("net_amount") @db.Decimal(18, 4)
+  nextExpectedDate DateTime            @map("next_expected_date") @db.Date
+  endDate          DateTime?           @map("end_date") @db.Date
+  confidence       IncomeConfidence    @default(estimated)
+  accountId        String?             @map("account_id")
+  isActive         Boolean             @default(true) @map("is_active")
+
+  user    AppUser           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account FinancialAccount? @relation(fields: [accountId], references: [id])
+
+  @@index([userId])
+  @@map("income_streams")
+  @@schema("app")
+}
+
+// An ongoing cash floor ("this money in my account isn't actually free to
+// spend"), deliberately NOT built on SinkingFund -- a reserve is an ongoing
+// floor with no deadline, a sinking fund is a save-toward-a-deadline target.
+// accountId null means the reserve applies to a whole currency rather than
+// one specific account.
+model CashReserve {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  name          String
+  currency      String
+  targetAmount  Decimal  @map("target_amount") @db.Decimal(18, 4)
+  minimumAmount Decimal? @map("minimum_amount") @db.Decimal(18, 4)
+  accountId     String?  @map("account_id")
+
+  user    AppUser           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account FinancialAccount? @relation(fields: [accountId], references: [id])
+
+  @@index([userId])
+  @@map("cash_reserves")
+  @@schema("app")
+}
+
+// =========================================================================
 // Import & onboarding
 // =========================================================================
 
@@ -838,5 +1068,26 @@ model CategoryTemplateItem {
   categoryTemplate CategoryTemplate @relation(fields: [categoryTemplateId], references: [id], onDelete: Cascade)
 
   @@map("category_template_items")
+  @@schema("app")
+}
+
+// OAuth attempts are single use and tied to the initiating browser and user.
+model OAuthLinkAttempt {
+  stateHash String @id @map("state_hash")
+  userId String @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  @@index([expiresAt])
+  @@map("oauth_link_attempts")
+  @@schema("app")
+}
+
+model JobRun {
+  id String @id @default(cuid())
+  name String
+  startedAt DateTime @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  status String
+  @@index([name, startedAt])
+  @@map("job_runs")
   @@schema("app")
 }

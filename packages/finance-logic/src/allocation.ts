@@ -95,19 +95,25 @@ export function computePortfolioDrift(
 }
 
 /**
- * Reduces a list of point-in-time holding rows to the latest one per
- * (accountId, symbol) -- shared by the Accounts page and the worker's
- * portfolio-drift evaluator so the two never silently disagree on what
- * "current holdings" means.
+ * Resolves the allocation bucket for one holding: prefers the user's own
+ * HoldingBucketAssignment for that symbol (e.g. "core"/"satellite"/"gold")
+ * when one exists, otherwise falls back to the security-type-derived label.
+ * `overridesBySymbol` should be built from the user's HoldingBucketAssignment
+ * rows (symbol -> bucketName).
  */
+export function resolveBucketName(
+  symbol: string,
+  securityType: string,
+  overridesBySymbol: Map<string, string>
+): string {
+  return overridesBySymbol.get(symbol) ?? bucketLabelForSecurityType(securityType);
+}
+
+/** Selects the latest complete report for each account, excluding exited symbols. */
 export function latestHoldingsBySymbol<T extends { accountId: string; symbol: string; asOfDate: Date }>(
   holdings: T[]
 ): T[] {
-  const latest = new Map<string, T>();
-  for (const h of holdings) {
-    const key = `${h.accountId}:${h.symbol}`;
-    const existing = latest.get(key);
-    if (!existing || h.asOfDate > existing.asOfDate) latest.set(key, h);
-  }
-  return [...latest.values()];
+  const dates = new Map<string, number>();
+  for (const h of holdings) dates.set(h.accountId, Math.max(dates.get(h.accountId) ?? 0, h.asOfDate.getTime()));
+  return holdings.filter((h) => h.asOfDate.getTime() === dates.get(h.accountId));
 }

@@ -9,14 +9,21 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: sprint-test-only
+          POSTGRES_DB: meadow_sprint_test
+        ports:
+          - 55439:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      # prisma.config.ts's env("DATABASE_URL") throws eagerly at config-load
-      # time (during `prisma generate`, which runs on every `pnpm install`
-      # via packages/db's postinstall hook) if the variable is unset at
-      # all — even though generate never actually connects to a database.
-      # This placeholder just needs to exist and parse as a connection
-      # string; nothing in this workflow talks to a real Postgres instance.
-      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+      DATABASE_URL: "postgresql://postgres:sprint-test-only@127.0.0.1:55439/meadow_sprint_test"
     steps:
       - uses: actions/checkout@v4
 
@@ -47,7 +54,12 @@ jobs:
       - name: Lint web
         run: pnpm --filter web lint
 
+      - name: Apply migrations to disposable test database
+        run: pnpm --filter @finance-app/db migrate:deploy
+
       - name: Test
+        env:
+          MEADOW_TEST_DATABASE_URL: "postgresql://postgres:sprint-test-only@127.0.0.1:55439/meadow_sprint_test"
         run: pnpm test
 
       - name: Build web

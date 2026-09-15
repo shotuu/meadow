@@ -12,7 +12,8 @@
     "@finance-app/crypto": "workspace:*",
     "@finance-app/db": "workspace:*",
     "@finance-app/finance-logic": "workspace:*",
-    "@finverse/sdk-typescript": "^0.0.408"
+    "@finverse/sdk-typescript": "^0.0.408",
+    "@finance-app/finance-data": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

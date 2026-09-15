@@ -1,13 +1,17 @@
+import { readCurrentHoldings, readPortfolioHistory } from "@finance-app/finance-data";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, TrendingUp } from "lucide-react";
 import { prisma } from "@finance-app/db";
+import { resolveBucketName } from "@finance-app/finance-logic";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PortfolioValueChart } from "../../portfolio-value-chart";
+import { SetHoldingBucketDialog } from "../../set-holding-bucket-dialog";
+import { RemoveHoldingBucketButton } from "../../remove-holding-bucket-button";
 
 const TRADE_TYPE_LABEL: Record<string, string> = {
   buy: "Buy",
@@ -23,45 +27,49 @@ export default async function HoldingDetailPage({ params }: { params: Promise<{ 
   const userId = await requireUserId();
   const { symbol } = await params;
 
-  const [holdings, historyRows, transactions] = await Promise.all([
-    prisma.investmentHolding.findMany({
-      where: { symbol, account: { userId } },
-      include: { account: { select: { name: true } } },
-      orderBy: { asOfDate: "desc" },
-    }),
-    prisma.investmentHoldingHistory.groupBy({
-      by: ["asOfDate"],
-      where: { symbol, account: { userId } },
-      _sum: { marketValue: true },
-      orderBy: { asOfDate: "asc" },
-    }),
+  const appUser = await prisma.appUser.findUniqueOrThrow({ where: { id: userId } });
+  const [holdings, history, transactions, bucketAssignment] = await Promise.all([
+    readCurrentHoldings(userId),
+    readPortfolioHistory(userId, appUser.defaultCurrency, undefined, symbol),
     prisma.investmentTransaction.findMany({
       where: { symbol, account: { userId } },
       orderBy: { tradeDate: "desc" },
     }),
+    prisma.holdingBucketAssignment.findUnique({ where: { userId_symbol: { userId, symbol } } }),
   ]);
 
-  if (holdings.length === 0 && transactions.length === 0) notFound();
+  if (!holdings.some((h) => h.symbol === symbol) && transactions.length === 0) notFound();
 
-  // One row per (accountId, symbol) already, since InvestmentHolding is
-  // point-in-time snapshots and this query only wants the latest -- take
-  // the most recent asOfDate per account rather than assuming a single row.
-  const latestByAccount = new Map<string, (typeof holdings)[number]>();
-  for (const h of holdings) {
-    const existing = latestByAccount.get(h.accountId);
-    if (!existing || h.asOfDate > existing.asOfDate) latestByAccount.set(h.accountId, h);
-  }
-  const currentHoldings = [...latestByAccount.values()];
-  const history = historyRows.map((r) => ({ asOfDate: r.asOfDate, value: Number(r._sum.marketValue ?? 0) }));
-  const currency = currentHoldings[0]?.currency ?? transactions[0]?.currency ?? "USD";
+  const currentHoldings = holdings.filter((h) => h.symbol === symbol && Number(h.quantity) !== 0);
+  const currency = appUser.defaultCurrency;
+  const accounts = await prisma.financialAccount.findMany({ where: { userId }, select: { id: true, name: true } });
+  const accountNames = new Map(accounts.map((a) => [a.id, a.name]));
+  const securityType = currentHoldings[0]?.securityType ?? "";
+  const overridesBySymbol: Map<string, string> = bucketAssignment
+    ? new Map([[symbol, bucketAssignment.bucketName]])
+    : new Map();
+  const resolvedBucketName = resolveBucketName(symbol, securityType, overridesBySymbol);
 
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
-      <div className="flex items-center gap-2">
-        <Link href="/accounts" className="text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="size-4" />
-        </Link>
-        <h1 className="text-2xl font-semibold">{symbol}</h1>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Link href="/accounts" className="text-sm text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="size-4" />
+          </Link>
+          <h1 className="text-2xl font-semibold">{symbol}</h1>
+          <Badge variant={bucketAssignment ? "secondary" : "outline"}>{resolvedBucketName}</Badge>
+        </div>
+        {securityType && (
+          <div className="flex items-center gap-2">
+            {bucketAssignment && <RemoveHoldingBucketButton symbol={symbol} />}
+            <SetHoldingBucketDialog
+              symbol={symbol}
+              currentBucketName={resolvedBucketName}
+              triggerLabel={bucketAssignment ? "Edit bucket" : "Set bucket"}
+            />
+          </div>
+        )}
       </div>
 
       {currentHoldings.map((h) => {
@@ -70,7 +78,7 @@ export default async function HoldingDetailPage({ params }: { params: Promise<{ 
           <Card key={h.accountId}>
             <CardHeader className="flex items-center justify-between space-y-0">
               <div>
-                <CardTitle className="text-base">{h.account.name}</CardTitle>
+                <CardTitle className="text-base">{accountNames.get(h.accountId)}</CardTitle>
                 <p className="text-sm text-muted-foreground">
                   {Number(h.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })} shares
                   {h.avgCost !== null && ` · avg cost ${formatMoney(h.avgCost, h.currency)}`}

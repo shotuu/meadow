@@ -20,12 +20,18 @@ importers:
       '@auth/prisma-adapter':
         specifier: ^2.11.3
         version: 2.11.3(@prisma/client@7.10.0(prisma@7.10.0(@types/node@20.19.43)(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3))
+      '@finance-app/balance-snapshots':
+        specifier: workspace:*
+        version: link:../../packages/balance-snapshots
       '@finance-app/categorization-ai':
         specifier: workspace:*
         version: link:../../packages/categorization-ai
       '@finance-app/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@finance-app/finance-data':
+        specifier: workspace:*
+        version: link:../../packages/finance-data
       '@finance-app/finance-logic':
         specifier: workspace:*
         version: link:../../packages/finance-logic
@@ -129,12 +135,18 @@ importers:
 
   apps/worker:
     dependencies:
+      '@finance-app/balance-snapshots':
+        specifier: workspace:*
+        version: link:../../packages/balance-snapshots
       '@finance-app/categorization-ai':
         specifier: workspace:*
         version: link:../../packages/categorization-ai
       '@finance-app/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@finance-app/finance-data':
+        specifier: workspace:*
+        version: link:../../packages/finance-data
       '@finance-app/finance-logic':
         specifier: workspace:*
         version: link:../../packages/finance-logic
@@ -163,6 +175,25 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12))
+
+  packages/balance-snapshots:
+    dependencies:
+      '@finance-app/db':
+        specifier: workspace:*
+        version: link:../db
+      '@finance-app/finance-data':
+        specifier: workspace:*
+        version: link:../finance-data
+      '@finance-app/finance-logic':
+        specifier: workspace:*
+        version: link:../finance-logic
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
 
   packages/categorization-ai:
     dependencies:
@@ -220,6 +251,22 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/finance-data:
+    dependencies:
+      '@finance-app/db':
+        specifier: workspace:*
+        version: link:../db
+      '@finance-app/finance-logic':
+        specifier: workspace:*
+        version: link:../finance-logic
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12))
+
   packages/finance-logic:
     devDependencies:
       typescript:
@@ -237,6 +284,9 @@ importers:
       '@finance-app/db':
         specifier: workspace:*
         version: link:../db
+      '@finance-app/finance-data':
+        specifier: workspace:*
+        version: link:../finance-data
       '@finance-app/finance-logic':
         specifier: workspace:*
         version: link:../finance-logic
@@ -284,6 +334,9 @@ importers:
       '@finance-app/db':
         specifier: workspace:*
         version: link:../db
+      '@finance-app/finance-data':
+        specifier: workspace:*
+        version: link:../finance-data
       '@finance-app/finance-logic':
         specifier: workspace:*
         version: link:../finance-logic

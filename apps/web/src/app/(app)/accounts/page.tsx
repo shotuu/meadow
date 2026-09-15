@@ -1,6 +1,6 @@
 import { Wallet, CircleDollarSign } from "lucide-react";
 import { prisma, type AccountType } from "@finance-app/db";
-import { latestHoldingsBySymbol } from "@finance-app/finance-logic";
+import { readAccountBalances, readCurrentHoldings, readPortfolioHistory, readUsdRates, requireConversion } from "@finance-app/finance-data";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -39,32 +39,14 @@ export default async function AccountsPage() {
     }),
   ]);
 
-  const balances = await prisma.transaction.groupBy({
-    by: ["accountId"],
-    where: { userId },
-    _sum: { amount: true },
-  });
-  const balanceByAccount = new Map<string, unknown>(balances.map((b) => [b.accountId, b._sum.amount]));
-
-  // Plaid- and Finverse-synced accounts have a real balance on file
-  // (refreshed via /accounts/balance/get on every Plaid sync, or the
-  // Account.balance Finverse itself returns on every Finverse sync — see
-  // refreshPlaidAccountBalances / upsertFinverseAccounts) that's
-  // authoritative over the transaction sum, which can drift from the
-  // institution's actual balance (pending transactions, fees that never
-  // show up as a discrete line item, sync gaps).
-  for (const a of accounts) {
-    if ((a.syncSource === "plaid" || a.syncSource === "finverse") && a.currentBalance !== null) {
-      balanceByAccount.set(a.id, a.currentBalance);
-    }
-  }
-
-  // IBKR-synced accounts have no Transaction rows at all — their balance
-  // comes from InvestmentHolding market values instead (latest asOfDate
-  // per symbol), not the transaction sum every other sync source uses.
+  const computedBalances = await readAccountBalances(userId, accounts);
+  const balanceByAccount = new Map([...computedBalances].map(([id, result]) => [id, result.balance]));
+  const ibkrCurrency = appUser.defaultCurrency;
+  const rates = await readUsdRates();
   const ibkrAccountIds = accounts.filter((a) => a.syncSource === "ibkr_flex").map((a) => a.id);
   const holdingCountByAccount = new Map<string, number>();
   const latestHoldings: {
+    accountId: string;
     symbol: string;
     securityType: string;
     quantity: number;
@@ -72,43 +54,37 @@ export default async function AccountsPage() {
     marketValue: number;
     currency: string;
   }[] = [];
-  let portfolioHistory: { asOfDate: Date; value: number }[] = [];
+  let portfolioHistory: { asOfDate: Date; value: number | null }[] = [];
   let targetAllocations: { bucketName: string; targetWeightPct: number; driftThresholdPct: number }[] = [];
+  let bucketAssignments: { symbol: string; bucketName: string }[] = [];
   if (ibkrAccountIds.length > 0) {
-    const [holdings, historyRows, targetAllocationRows] = await Promise.all([
-      prisma.investmentHolding.findMany({
-        where: { accountId: { in: ibkrAccountIds } },
-      }),
-      prisma.investmentHoldingHistory.groupBy({
-        by: ["asOfDate"],
-        where: { accountId: { in: ibkrAccountIds } },
-        _sum: { marketValue: true },
-        orderBy: { asOfDate: "asc" },
-      }),
+    const [holdings, historyRows, targetAllocationRows, bucketAssignmentRows] = await Promise.all([
+      readCurrentHoldings(userId, ibkrAccountIds),
+      readPortfolioHistory(userId, ibkrCurrency, ibkrAccountIds),
       prisma.targetAllocation.findMany({ where: { userId } }),
+      prisma.holdingBucketAssignment.findMany({ where: { userId } }),
     ]);
-    const latestBySymbol = latestHoldingsBySymbol(holdings);
+    const latestBySymbol = holdings.filter((h) => Number(h.quantity) !== 0);
     for (const h of latestBySymbol) {
-      balanceByAccount.set(h.accountId, (Number(balanceByAccount.get(h.accountId)) || 0) + Number(h.marketValue));
       holdingCountByAccount.set(h.accountId, (holdingCountByAccount.get(h.accountId) ?? 0) + 1);
       latestHoldings.push({
+        accountId: h.accountId,
         symbol: h.symbol,
         securityType: h.securityType,
         quantity: Number(h.quantity),
-        avgCost: h.avgCost !== null ? Number(h.avgCost) : null,
-        marketValue: Number(h.marketValue),
-        currency: h.currency,
+        avgCost: h.avgCost !== null ? requireConversion(Number(h.avgCost), h.currency, ibkrCurrency, rates) : null,
+        marketValue: requireConversion(Number(h.marketValue), h.currency, ibkrCurrency, rates),
+        currency: ibkrCurrency,
       });
     }
-    portfolioHistory = historyRows.map((r) => ({ asOfDate: r.asOfDate, value: Number(r._sum.marketValue ?? 0) }));
+    portfolioHistory = historyRows;
     targetAllocations = targetAllocationRows.map((t) => ({
       bucketName: t.bucketName,
       targetWeightPct: Number(t.targetWeightPct),
       driftThresholdPct: Number(t.driftThresholdPct),
     }));
+    bucketAssignments = bucketAssignmentRows.map((b) => ({ symbol: b.symbol, bucketName: b.bucketName }));
   }
-
-  const ibkrCurrency = accounts.find((a) => a.syncSource === "ibkr_flex")?.currency ?? appUser.defaultCurrency;
 
   const assets = accounts.filter((a) => a.classification === "asset");
   const liabilities = accounts.filter((a) => a.classification === "liability");
@@ -135,6 +111,9 @@ export default async function AccountsPage() {
         </div>
       </div>
 
+      {ibkrAccountIds.length > 0 && (
+        <p className="text-sm text-muted-foreground">Brokerage balances include positions only; brokerage cash is not yet imported.</p>
+      )}
       {byCurrency.size > 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
           {[...byCurrency.entries()].map(([currency, totals]) => (
@@ -151,11 +130,20 @@ export default async function AccountsPage() {
       )}
 
       {latestHoldings.length > 0 && (
-        <HoldingsSection holdings={latestHoldings} history={portfolioHistory} currency={ibkrCurrency} />
+        <HoldingsSection
+          holdings={latestHoldings}
+          history={portfolioHistory}
+          currency={ibkrCurrency}
+          bucketAssignments={bucketAssignments}
+        />
       )}
 
       {latestHoldings.length > 0 && (
-        <TargetAllocationSection holdings={latestHoldings} targets={targetAllocations} />
+        <TargetAllocationSection
+          holdings={latestHoldings}
+          targets={targetAllocations}
+          bucketAssignments={bucketAssignments}
+        />
       )}
 
       <AccountGroup
@@ -228,7 +216,7 @@ function AccountGroup({
     syncSource: string;
     _count: { transactions: number };
   }>;
-  balanceByAccount: Map<string, unknown>;
+  balanceByAccount: Map<string, number>;
   holdingCountByAccount: Map<string, number>;
 }) {
   if (accounts.length === 0) return null;

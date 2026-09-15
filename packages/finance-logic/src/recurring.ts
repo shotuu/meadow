@@ -1,3 +1,4 @@
+import { addMonthsClamped } from "./period";
 export type Cadence = "weekly" | "biweekly" | "monthly" | "quarterly" | "annual" | "irregular";
 
 export interface RecurringDetectionInput {
@@ -119,14 +120,11 @@ export function computeNextExpectedDate(lastSeenDate: Date, cadence: Cadence): D
       next.setUTCDate(next.getUTCDate() + 14);
       return next;
     case "monthly":
-      next.setUTCMonth(next.getUTCMonth() + 1);
-      return next;
+      return addMonthsClamped(next, 1);
     case "quarterly":
-      next.setUTCMonth(next.getUTCMonth() + 3);
-      return next;
+      return addMonthsClamped(next, 3);
     case "annual":
-      next.setUTCFullYear(next.getUTCFullYear() + 1);
-      return next;
+      return addMonthsClamped(next, 12);
     case "irregular":
       return null;
   }

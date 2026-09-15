@@ -7,6 +7,7 @@ import {
   Repeat,
   BellRing,
   Settings,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -26,6 +27,7 @@ export const PRIMARY_NAV_ITEMS: NavItem[] = [
 export const MORE_NAV_ITEMS: NavItem[] = [
   { href: "/categories", label: "Categories", icon: Tags },
   { href: "/recurring", label: "Recurring", icon: Repeat },
+  { href: "/planning", label: "Planning", icon: CalendarClock },
   { href: "/alerts", label: "Alerts", icon: BellRing },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

@@ -12,6 +12,7 @@ import { CategoryFilter } from "./category-filter";
 import { CategoryPieChart } from "./category-pie-chart";
 import { TransactionsPagination } from "./pagination";
 import { SpendRangeFilter } from "./spend-range-filter";
+import { SuggestedTransfersTab, type TransferMatchRow } from "./suggested-transfers-tab";
 import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
@@ -19,6 +20,7 @@ import { SPEND_RANGE_LABEL, SPEND_RANGE_KINDS } from "@/lib/spend-range";
 import {
   resolveSpendRange,
   convertCurrency,
+  findPossibleCrossCurrencyTransfers,
   netSpendByCategory,
   summarizeSpendByCategory,
   type SpendRangeKind,
@@ -69,7 +71,7 @@ export default async function TransactionsPage({
     : "mtd";
   const transactionWhere = { userId, ...(categoryFilter && { categoryId: categoryFilter }) };
 
-  const [appUser, accounts, categories, csvTemplates, transactions, transactionCount, needsReview] =
+  const [appUser, accounts, categories, csvTemplates, transactions, transactionCount, needsReview, pendingTransferMatches] =
     await Promise.all([
       prisma.appUser.findUniqueOrThrow({ where: { id: userId } }),
       prisma.financialAccount.findMany({
@@ -110,8 +112,168 @@ export default async function TransactionsPage({
         orderBy: { date: "desc" },
         take: 200,
       }),
+      prisma.transferMatchCandidate.findMany({
+        where: { userId, status: "pending" },
+        orderBy: { confidenceScore: "desc" },
+        include: {
+          transaction: {
+            select: {
+              id: true,
+              date: true,
+              amount: true,
+              currency: true,
+              description: true,
+              account: { select: { name: true } },
+            },
+          },
+        },
+      }),
     ]);
   const totalPages = Math.max(1, Math.ceil(transactionCount / PAGE_SIZE));
+
+  const transactionCounterpartIds = pendingTransferMatches
+    .filter((c) => c.counterpartType === "transaction")
+    .map((c) => c.counterpartId);
+  const investmentCounterpartIds = pendingTransferMatches
+    .filter((c) => c.counterpartType === "investment_transaction")
+    .map((c) => c.counterpartId);
+
+  const [transactionCounterparts, investmentCounterparts] = await Promise.all([
+    transactionCounterpartIds.length > 0
+      ? prisma.transaction.findMany({
+          where: { id: { in: transactionCounterpartIds }, userId },
+          select: {
+            id: true,
+            date: true,
+            amount: true,
+            currency: true,
+            description: true,
+            account: { select: { name: true } },
+          },
+        })
+      : Promise.resolve([]),
+    investmentCounterpartIds.length > 0
+      ? prisma.investmentTransaction.findMany({
+          where: { id: { in: investmentCounterpartIds }, account: { userId } },
+          select: {
+            id: true,
+            tradeDate: true,
+            amount: true,
+            currency: true,
+            tradeType: true,
+            symbol: true,
+            account: { select: { name: true } },
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+  const transactionCounterpartById = new Map(transactionCounterparts.map((t) => [t.id, t]));
+  const investmentCounterpartById = new Map(investmentCounterparts.map((t) => [t.id, t]));
+
+  const transferMatchRows: TransferMatchRow[] = pendingTransferMatches.flatMap((c) => {
+    const anchor = {
+      id: c.transaction.id,
+      date: c.transaction.date,
+      amount: Number(c.transaction.amount),
+      currency: c.transaction.currency,
+      description: c.transaction.description,
+      accountName: c.transaction.account.name,
+    };
+
+    if (c.counterpartType === "transaction") {
+      const counterpart = transactionCounterpartById.get(c.counterpartId);
+      if (!counterpart) return [];
+      return [
+        {
+          id: c.id,
+          confidenceScore: Number(c.confidenceScore),
+          anchor,
+          counterpart: {
+            id: counterpart.id,
+            date: counterpart.date,
+            amount: Number(counterpart.amount),
+            currency: counterpart.currency,
+            description: counterpart.description,
+            accountName: counterpart.account.name,
+          },
+        },
+      ];
+    }
+
+    const counterpart = investmentCounterpartById.get(c.counterpartId);
+    if (!counterpart) return [];
+    const tradeLabel = counterpart.tradeType === "deposit" ? "Deposit" : "Withdrawal";
+    return [
+      {
+        id: c.id,
+        confidenceScore: Number(c.confidenceScore),
+        anchor,
+        counterpart: {
+          id: counterpart.id,
+          date: counterpart.tradeDate,
+          amount: Number(counterpart.amount),
+          currency: counterpart.currency,
+          description: counterpart.symbol ? `${tradeLabel} (${counterpart.symbol})` : tradeLabel,
+          accountName: counterpart.account.name,
+        },
+      },
+    ];
+  });
+
+  // Read-only, informational only -- cross-currency transfers are never
+  // auto-matched (the app only has a "latest FX rate," not a historical
+  // rate for the transfer date, so an FX-tolerant auto-match could be
+  // quietly wrong). Scans the same recent window as the nightly matcher.
+  const crossCurrencyWindowStart = new Date();
+  crossCurrencyWindowStart.setUTCDate(crossCurrencyWindowStart.getUTCDate() - 45);
+  const recentTransactionsForCrossCurrency = await prisma.transaction.findMany({
+    where: { userId, isTransfer: false, date: { gte: crossCurrencyWindowStart } },
+    select: {
+      id: true,
+      accountId: true,
+      amount: true,
+      currency: true,
+      date: true,
+      description: true,
+      account: { select: { name: true } },
+    },
+  });
+  const crossCurrencyById = new Map(recentTransactionsForCrossCurrency.map((t) => [t.id, t]));
+  const crossCurrencyCandidates = findPossibleCrossCurrencyTransfers(
+    recentTransactionsForCrossCurrency.map((t) => ({
+      id: t.id,
+      accountId: t.accountId,
+      amount: Number(t.amount),
+      currency: t.currency,
+      date: t.date,
+    }))
+  );
+  const crossCurrencyRows = crossCurrencyCandidates.flatMap((c) => {
+    const a = crossCurrencyById.get(c.aId);
+    const b = crossCurrencyById.get(c.bId);
+    if (!a || !b) return [];
+    return [
+      {
+        daysApart: c.daysApart,
+        a: {
+          id: a.id,
+          date: a.date,
+          amount: Number(a.amount),
+          currency: a.currency,
+          description: a.description,
+          accountName: a.account.name,
+        },
+        b: {
+          id: b.id,
+          date: b.date,
+          amount: Number(b.amount),
+          currency: b.currency,
+          description: b.description,
+          accountName: b.account.name,
+        },
+      },
+    ];
+  });
 
   const { start: spendRangeStart, end: spendRangeEnd } = resolveSpendRange(spendRange, new Date());
   const rangedExpenses = await prisma.transaction.findMany({
@@ -212,6 +374,14 @@ export default async function TransactionsPage({
                   </Badge>
                 )}
               </TabsTrigger>
+              <TabsTrigger value="transfers">
+                Suggested transfers
+                {transferMatchRows.length > 0 && (
+                  <Badge variant="secondary" className="ml-1">
+                    {transferMatchRows.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
             </TabsList>
             <CategoryFilter categories={categories} selected={categoryFilter} />
           </div>
@@ -226,6 +396,9 @@ export default async function TransactionsPage({
             ) : (
               <TransactionList transactions={needsReview} categories={categories} />
             )}
+          </TabsContent>
+          <TabsContent value="transfers" className="mt-3">
+            <SuggestedTransfersTab rows={transferMatchRows} crossCurrencyRows={crossCurrencyRows} />
           </TabsContent>
         </Tabs>
       )}

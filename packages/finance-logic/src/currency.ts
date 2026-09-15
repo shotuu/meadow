@@ -16,11 +16,12 @@ export function convertCurrency(
   to: string,
   usdRates: UsdRateMap
 ): number | null {
+  if (!Number.isFinite(amount)) return null;
   if (from === to) return amount;
 
   const fromRate = from === "USD" ? 1 : usdRates[from];
   const toRate = to === "USD" ? 1 : usdRates[to];
-  if (fromRate == null || toRate == null) return null;
+  if (!Number.isFinite(fromRate) || !Number.isFinite(toRate) || fromRate <= 0 || toRate <= 0) return null;
 
   const amountInUsd = amount / fromRate;
   return amountInUsd * toRate;

@@ -5,14 +5,14 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { formatMoney } from "@/lib/format";
 
 const chartConfig = {
-  value: { label: "Portfolio value", color: "var(--chart-1)" },
+  value: { label: "Holdings value", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
 export function PortfolioValueChart({
   data,
   currency,
 }: {
-  data: { asOfDate: Date; value: number }[];
+  data: { asOfDate: Date; value: number | null }[];
   currency: string;
 }) {
   const points = data.map((d) => ({
@@ -21,6 +21,8 @@ export function PortfolioValueChart({
   }));
 
   return (
+    <div>
+    {data.some((point) => point.value === null) && <p className="text-xs text-muted-foreground">Gaps indicate unavailable historical exchange rates.</p>}
     <ChartContainer config={chartConfig} className="aspect-auto h-40 w-full">
       <AreaChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
         <defs>
@@ -44,5 +46,6 @@ export function PortfolioValueChart({
         />
       </AreaChart>
     </ChartContainer>
+    </div>
   );
 }

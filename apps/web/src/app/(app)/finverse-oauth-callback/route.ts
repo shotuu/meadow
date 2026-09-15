@@ -1,27 +1,47 @@
 import { NextResponse } from "next/server";
-import { completeFinverseLink } from "../accounts/finverse-actions";
+import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
+import { linkFinverseConnection } from "@finance-app/finverse-sync";
+import { requireUserId } from "@/lib/session";
+import { consumeFinverseState, FINVERSE_CALLBACK_PATH, FINVERSE_RESPONSE_COOKIE, finverseCookieOptions } from "@/lib/finverse-state";
 
-/**
- * Finverse Link's response_mode "form_post" means the browser comes back
- * here via a POSTed form (code/state as form fields), not a query string
- * -- unlike Plaid's OAuth callback, which is a page component reading
- * searchParams. completeFinverseLink re-derives the authenticated user
- * itself (requireUserId), so this route doesn't need its own auth check.
- */
+function baseUrl(): string {
+  if (!process.env.AUTH_URL) throw new Error("AUTH_URL must be set");
+  return process.env.AUTH_URL;
+}
+
+/** Relay form_post to a same-site GET so Lax session/state cookies are available. */
 export async function POST(request: Request): Promise<Response> {
-  const formData = await request.formData();
-  const code = formData.get("code");
-  const url = new URL(request.url);
-
-  if (typeof code !== "string" || !code) {
-    return NextResponse.redirect(new URL("/accounts?finverse=error", url), 303);
+  const form = await request.formData();
+  const code = form.get("code"), state = form.get("state");
+  if (typeof code !== "string" || !code || code.length > 2048 || typeof state !== "string" || state.length > 128 || !state) {
+    return NextResponse.redirect(new URL("/accounts?finverse=error", baseUrl()), 303);
   }
+  const response = NextResponse.redirect(new URL(FINVERSE_CALLBACK_PATH, baseUrl()), 303);
+  response.cookies.set(FINVERSE_RESPONSE_COOKIE, JSON.stringify({ code, state }), { ...finverseCookieOptions, maxAge: 60 });
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
 
+export async function GET(): Promise<Response> {
+  const userId = await requireUserId();
+  const jar = await cookies();
+  const payload = jar.get(FINVERSE_RESPONSE_COOKIE)?.value;
+  jar.set(FINVERSE_RESPONSE_COOKIE, "", { ...finverseCookieOptions, maxAge: 0 });
+  let result = "error";
   try {
-    await completeFinverseLink(code);
-    return NextResponse.redirect(new URL("/accounts?finverse=success", url), 303);
-  } catch (err) {
-    console.error("[finverse-oauth-callback] linking failed", err);
-    return NextResponse.redirect(new URL("/accounts?finverse=error", url), 303);
+    const { code, state } = JSON.parse(payload ?? "{}");
+    if (typeof code !== "string" || !code || typeof state !== "string") throw new Error("Missing callback response");
+    await consumeFinverseState(userId, state);
+    await linkFinverseConnection(userId, code, new URL(FINVERSE_CALLBACK_PATH, baseUrl()).toString());
+    for (const path of ["/accounts", "/transactions", "/dashboard"]) revalidatePath(path);
+    result = "success";
+  } catch {
+    // Provider errors may contain tokens; keep the callback log free of response payloads.
+    console.error("[finverse-oauth-callback] linking failed");
   }
+  const response = NextResponse.redirect(new URL(`/accounts?finverse=${result}`, baseUrl()), 303);
+  response.headers.set("Cache-Control", "no-store");
+  response.headers.set("Referrer-Policy", "no-referrer");
+  return response;
 }

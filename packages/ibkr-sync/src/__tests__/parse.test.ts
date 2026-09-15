@@ -35,3 +35,9 @@ describe("parseIbkrDateTime", () => {
     expect(date.toISOString()).toBe(new Date(Date.UTC(2026, 2, 15)).toISOString());
   });
 });
+
+describe("invalid report dates", () => {
+  it.each(["20260231", "20261301", "undefined", "2026011"])("rejects %s", (date) => {
+    expect(() => parseIbkrDate(date)).toThrow("Invalid IBKR date");
+  });
+});
