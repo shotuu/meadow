@@ -1,9 +1,10 @@
 import "server-only";
-import { prisma, type AccountType } from "@finance-app/db";
+import { prisma } from "@finance-app/db";
 import {
   readAccountBalances,
   readCurrentHoldings,
   readPortfolioHistory,
+  readNetWorthHistory,
   readUsdRates,
   computeRecurringBudgetProgress,
   computePrepaidCoverageProgress,
@@ -21,6 +22,9 @@ import {
   normalizeMerchantKey,
   classifyInstrumentType,
   instrumentTypeLabel,
+  isLegacyInstrumentLabelTarget,
+  splitInvestedFromBrokerageCash,
+  CASH_ACCOUNT_TYPES,
   type InstrumentType,
   type ReversalCandidateEvent,
 } from "@finance-app/finance-logic";
@@ -63,10 +67,6 @@ import {
 
 const RECENT_WINDOW_MONTHS = 12;
 const UPCOMING_OBLIGATION_WINDOW_DAYS = 90;
-
-// Only checking/savings/cash accounts feed the cash-policy calculations --
-// same set the dashboard already uses for this exact purpose.
-const CASH_ACCOUNT_TYPES: AccountType[] = ["checking", "savings", "cash"];
 
 /**
  * Builds the AI Financial Context export for the signed-in user. Runs
@@ -219,6 +219,11 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
       budgetRows.map(async (b) => {
         const progress = await computeRecurringBudgetProgress(userId, b.category, b, now, tx);
         const currentPeriod = progress.periods?.at(-1);
+        if (progress.conversionIncomplete) {
+          warnings.push(
+            `${buildCategoryPath(b.category)}: some transactions couldn't be converted to ${b.currency} for this budget period (exchange rate not yet available) -- spentApprox/remainingApprox below may understate real spend.`
+          );
+        }
         return {
           categoryPath: buildCategoryPath(b.category)!,
           budgetType: b.category.budgetType,
@@ -333,11 +338,24 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
     // Strategy allocation: the user's own bucket assignments, compared
     // against the user's own TargetAllocation rows -- the matching
     // dimension (see schema.ts's comment on why these were split).
+    // Ordinary brokerage cash is excluded from the denominator via
+    // splitInvestedFromBrokerageCash -- the exact same shared function
+    // Invest and the worker's portfolio_drift alert use, so this export can
+    // never disagree with what the user sees on screen (Phase 5).
     if (targetRows.length === 0) warnings.push("No portfolio strategy targets configured -- drift cannot be evaluated, only current allocation.");
-    const bucketedByStrategy = activeHoldings.flatMap((h) => {
+    const strategyClassified = activeHoldings.flatMap((h) => {
       const converted = convertCurrency(Number(h.marketValue), h.currency, defaultCurrency, currentRates);
-      return converted === null ? [] : [{ bucketName: overridesBySymbol.get(h.symbol) ?? "Unclassified", marketValue: converted }];
+      if (converted === null) return [];
+      return [{
+        bucketName: overridesBySymbol.get(h.symbol) ?? "Unclassified",
+        marketValue: converted,
+        instrumentType: classifyHolding(h).instrumentType,
+      }];
     });
+    if (strategyClassified.length < activeHoldings.length) {
+      warnings.push("Some holdings couldn't be converted to the default currency for strategy allocation -- totals below may be incomplete.");
+    }
+    const { invested: bucketedByStrategy, brokerageCash } = splitInvestedFromBrokerageCash(strategyClassified);
     const currentStrategyAllocation = computeCurrentAllocation(bucketedByStrategy);
     const strategyTargets = targetRows.map((t) => ({ bucketName: t.bucketName, targetWeightPct: Number(t.targetWeightPct), driftThresholdPct: Number(t.driftThresholdPct) }));
     const strategyDrift = computePortfolioDrift(currentStrategyAllocation, strategyTargets);
@@ -346,13 +364,15 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
     // matching current strategy bucket almost always means a leftover
     // target from before instrument type and strategy bucket were split
     // into separate concepts -- flag it by name rather than silently
-    // producing a confusing 100%-drift number with no explanation.
+    // producing a confusing 100%-drift number with no explanation. Shared
+    // heuristic with Home's stale-target banner and Invest's guided
+    // migration flow (isLegacyInstrumentLabelTarget) so all three can never
+    // disagree about which target is stale.
     const currentStrategyBucketNames = new Set(currentStrategyAllocation.map((a) => a.bucketName));
-    const instrumentLabelSet = new Set((["stock", "etf", "fund", "bond", "cash", "crypto", "option", "other", "unknown"] as InstrumentType[]).map(instrumentTypeLabel));
     for (const target of strategyTargets) {
-      if (instrumentLabelSet.has(target.bucketName) && !currentStrategyBucketNames.has(target.bucketName)) {
+      if (isLegacyInstrumentLabelTarget(target.bucketName, currentStrategyBucketNames)) {
         warnings.push(
-          `Strategy target "${target.bucketName}" looks like a leftover instrument-type label from before strategy buckets and instrument types were separate concepts -- no current holding is assigned to a strategy bucket with that name, so its drift is likely meaningless. Consider renaming/removing it and assigning holdings to real strategy buckets (e.g. Core/Satellite) on the Accounts page.`
+          `Strategy target "${target.bucketName}" looks like a leftover instrument-type label from before strategy buckets and instrument types were separate concepts -- no current holding is assigned to a strategy bucket with that name, so its drift is likely meaningless. Consider replacing it via the guided migration prompt on the Invest page.`
         );
       }
     }
@@ -439,6 +459,7 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
           targets: strategyTargets.map((t) => ({ bucketName: t.bucketName, targetWeightPct: roundPct(t.targetWeightPct), driftThresholdPct: roundPct(t.driftThresholdPct) })),
           drift: strategyDrift.map((d) => ({ ...d, currentWeightPct: roundPct(d.currentWeightPct), targetWeightPct: roundPct(d.targetWeightPct), driftPct: roundPct(d.driftPct) })),
         },
+        brokerageCashInDefaultCurrencyApprox: roundMoney(brokerageCash),
         portfolioHistoryRecent,
       },
       obligations,
@@ -507,53 +528,21 @@ function computeNetWorthTotals(
   };
 }
 
-/** Mirrors readPortfolioHistory's per-day historical-rate approach for account balance snapshots. */
+/** Thin adapter over the shared readNetWorthHistory (packages/finance-data) -- rounds and re-shapes into this export's own field names/string dates. */
 async function computeNetWorthHistory(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
   userId: string,
   accounts: { id: string; classification: string }[],
   defaultCurrency: string
 ): Promise<ExportNetWorthSnapshot[]> {
-  const classificationById = new Map(accounts.map((a) => [a.id, a.classification]));
-  const snapshots = await tx.accountBalanceSnapshot.findMany({
-    where: { userId },
-    orderBy: { asOfDate: "asc" },
-    select: { accountId: true, asOfDate: true, balance: true, currency: true },
-  });
-  const byDay = new Map<string, typeof snapshots>();
-  for (const row of snapshots) {
-    const day = row.asOfDate.toISOString().slice(0, 10);
-    const group = byDay.get(day) ?? [];
-    group.push(row);
-    byDay.set(day, group);
-  }
-  const result: ExportNetWorthSnapshot[] = [];
-  for (const [day, rows] of byDay) {
-    const asOfDate = new Date(day);
-    const rates = await readUsdRates(asOfDate, tx);
-    let assets = 0;
-    let liabilities = 0;
-    let hasGap = false;
-    for (const row of rows) {
-      const classification = classificationById.get(row.accountId);
-      if (!classification) continue;
-      const converted = convertCurrency(Number(row.balance), row.currency, defaultCurrency, rates);
-      if (converted === null) {
-        hasGap = true;
-        continue;
-      }
-      if (classification === "asset") assets += converted;
-      else liabilities += converted;
-    }
-    result.push({
-      asOfDate: day,
-      totalAssetsInDefaultCurrencyApprox: hasGap ? null : roundMoney(assets),
-      totalLiabilitiesInDefaultCurrencyApprox: hasGap ? null : roundMoney(liabilities),
-      netWorthInDefaultCurrencyApprox: hasGap ? null : roundMoney(assets + liabilities),
-      hasGap,
-    });
-  }
-  return result;
+  const rows = await readNetWorthHistory(userId, accounts, defaultCurrency, tx);
+  return rows.map((r) => ({
+    asOfDate: r.asOfDate.toISOString().slice(0, 10),
+    totalAssetsInDefaultCurrencyApprox: r.totalAssets === null ? null : roundMoney(r.totalAssets),
+    totalLiabilitiesInDefaultCurrencyApprox: r.totalLiabilities === null ? null : roundMoney(r.totalLiabilities),
+    netWorthInDefaultCurrencyApprox: r.netWorth === null ? null : roundMoney(r.netWorth),
+    hasGap: r.hasGap,
+  }));
 }
 
 /**
@@ -572,7 +561,7 @@ function computeCashPolicy(
 ): ExportCashPolicy {
   const cashByCurrency = new Map<string, number>();
   for (const account of accounts) {
-    if (account.classification === "asset" && CASH_ACCOUNT_TYPES.includes(account.type as AccountType)) {
+    if (account.classification === "asset" && (CASH_ACCOUNT_TYPES as readonly string[]).includes(account.type)) {
       const balance = computedBalances.get(account.id)?.balance ?? 0;
       cashByCurrency.set(account.currency, (cashByCurrency.get(account.currency) ?? 0) + balance);
     }

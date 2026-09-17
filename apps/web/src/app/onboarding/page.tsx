@@ -20,7 +20,7 @@ export default async function OnboardingPage() {
 
   const existingCategoryCount = await prisma.category.count({ where: { userId } });
   if (existingCategoryCount > 0) {
-    redirect("/dashboard");
+    redirect("/home");
   }
 
   const templates = await prisma.categoryTemplate.findMany({

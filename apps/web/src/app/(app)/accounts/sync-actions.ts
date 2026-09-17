@@ -8,6 +8,7 @@ import { syncFinverseConnection } from "@finance-app/finverse-sync";
 import { runCategorizationBatchForUser } from "@finance-app/categorization-ai";
 import { snapshotAccountBalancesForUser } from "@finance-app/balance-snapshots";
 import { requireUserId } from "@/lib/session";
+import { revalidateHomeSurfaces } from "@/lib/revalidate";
 
 export interface SyncNowResult {
   syncedCount: number;
@@ -82,7 +83,7 @@ export async function syncAllAccounts(): Promise<SyncNowResult> {
 
   revalidatePath("/accounts");
   revalidatePath("/transactions");
-  revalidatePath("/dashboard");
+  revalidateHomeSurfaces();
 
   return { syncedCount, errors };
 }

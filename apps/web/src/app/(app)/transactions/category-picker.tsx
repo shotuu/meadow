@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { categoryColorVar } from "@/lib/category-color";
+import { LOW_CONFIDENCE_THRESHOLD } from "@finance-app/categorization-ai/constants";
 import { setTransactionCategory, confirmTransactionCategory } from "./actions";
 
 type Category = { id: string; name: string };
@@ -58,7 +59,9 @@ export function CategoryPicker({
           ))}
         </SelectContent>
       </Select>
-      {categorySource === "ai" && categoryConfidence != null && (
+      {categorySource === "ai" &&
+        categoryConfidence != null &&
+        categoryConfidence < LOW_CONFIDENCE_THRESHOLD && (
         <>
           <Badge variant="outline" className="shrink-0">
             AI · {Math.round(categoryConfidence * 100)}%

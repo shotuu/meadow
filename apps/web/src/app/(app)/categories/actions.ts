@@ -34,6 +34,7 @@ export async function updateCategoryBudgetType(categoryId: string, budgetType: B
 
   revalidatePath("/categories");
   revalidatePath("/budgets");
+  revalidatePath("/plan");
 }
 
 export async function archiveCategory(categoryId: string) {
@@ -58,6 +59,16 @@ export async function unarchiveCategory(categoryId: string) {
   revalidatePath("/categories");
 }
 
+// Category.pinnedToDashboard has had no reader anywhere in the app since
+// Home's Phase 3 rebuild replaced the old per-category "pinned" dashboard
+// cards with the curated Home screen -- toggling it currently has zero
+// observable effect. The Phase 7 UI/UX-polish pass removed the Pin/Unpin
+// control from the Categories page for that reason (a control that
+// silently does nothing is worse than no control), but left this action
+// and the underlying schema field in place rather than a destructive
+// migration -- flagged as legacy/dead, a candidate for real removal (or a
+// real reuse, e.g. resurrecting a "pinned categories" concept somewhere)
+// in a future phase, not decided here.
 export async function toggleDashboardPin(categoryId: string) {
   const userId = await requireUserId();
 

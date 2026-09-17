@@ -1,5 +1,12 @@
 import type { ObligationPriority } from "./obligations";
 
+// Which FinancialAccount.type values count as spendable cash for the
+// cash-vs-invested split (Home) and the cash-policy calculations below.
+// This package can't import the AccountType Prisma enum (framework/DB-free
+// by design), so callers with that type widen it structurally -- both
+// existing call sites already did this via an identical local copy.
+export const CASH_ACCOUNT_TYPES = ["checking", "savings", "cash"] as const;
+
 export interface CashBalance {
   currency: string;
   balance: number;
@@ -82,4 +89,59 @@ export function computeInvestableCash(
     result[currency] = Math.max(0, base - committed);
   }
   return result;
+}
+
+export interface GenuinelyFreeCashLine {
+  currency: string;
+  /** Total cash in CASH_ACCOUNT_TYPES accounts, this currency, unmodified. */
+  eligibleCash: number;
+  /** The amount actually deducted for reserves -- capped at eligibleCash, never the raw configured target (see computeUncommittedCash's own floor-at-zero behavior). */
+  reservedCash: number;
+  /** The amount actually deducted for near-term mandatory obligations -- capped at the cash left after reserves. */
+  relevantObligations: number;
+  /** eligibleCash - reservedCash - relevantObligations, exactly. */
+  genuinelyFree: number;
+}
+
+/**
+ * Per-currency reconciliation of "what's genuinely free to use" --
+ * eligibleCash / reservedCash / relevantObligations / genuinelyFree, where
+ * the last three are DERIVED from computeUncommittedCash's and
+ * computeInvestableCash's own real outputs (never a separate parallel
+ * calculation), so eligibleCash - reservedCash - relevantObligations
+ * equals genuinelyFree exactly, by construction, for every currency. This
+ * is what a UI reconciliation view should render line-by-line -- see
+ * cash-policy.test.ts for the identity check across cash-only, reserve-
+ * exceeds-cash, and obligation-exceeds-uncommitted cases.
+ *
+ * Callers deciding whether to show this as a headline figure still need
+ * their own completeness gate on top (e.g. "has the user entered at least
+ * one CashReserve and one Obligation") -- this function only reconciles
+ * the math for currencies that DO have data; it doesn't decide whether
+ * that data is complete enough to trust as a consumer-facing answer.
+ */
+export function computeGenuinelyFreeCashByCurrency(
+  cashBalances: CashBalance[],
+  reserves: ReserveConfig[],
+  obligations: ObligationForInvestableCash[],
+  now: Date,
+  nearTermWindowDays = 30
+): GenuinelyFreeCashLine[] {
+  const cashByCurrency = new Map<string, number>();
+  for (const b of cashBalances) {
+    cashByCurrency.set(b.currency, (cashByCurrency.get(b.currency) ?? 0) + b.balance);
+  }
+
+  const uncommitted = computeUncommittedCash(cashBalances, reserves);
+  const investable = computeInvestableCash(uncommitted, obligations, now, nearTermWindowDays);
+
+  const currencies = new Set([...Object.keys(uncommitted), ...Object.keys(investable)]);
+  return [...currencies].map((currency) => {
+    const eligibleCash = cashByCurrency.get(currency) ?? 0;
+    const afterReserves = uncommitted[currency] ?? eligibleCash;
+    const reservedCash = eligibleCash - afterReserves;
+    const genuinelyFree = investable[currency] ?? afterReserves;
+    const relevantObligations = afterReserves - genuinelyFree;
+    return { currency, eligibleCash, reservedCash, relevantObligations, genuinelyFree };
+  });
 }

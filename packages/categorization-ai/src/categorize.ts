@@ -1,14 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { prisma } from "@finance-app/db";
+import { LOW_CONFIDENCE_THRESHOLD } from "./constants";
+
+export { LOW_CONFIDENCE_THRESHOLD };
 
 const MODEL = "gemini-flash-lite-latest";
 const BATCH_SIZE = 50;
 const LEARNED_EXAMPLE_LIMIT = 20;
-
-// A suggestion at or above this confidence is applied without flagging it
-// for human review; below it, the UI surfaces the transaction on the
-// Needs Review tab even though a category was still assigned.
-export const LOW_CONFIDENCE_THRESHOLD = 0.7;
 
 let client: GoogleGenAI | undefined;
 function getClient(): GoogleGenAI {

@@ -106,6 +106,7 @@ model AppUser {
   transactions          Transaction[]
   accountBalanceSnapshots AccountBalanceSnapshot[]
   transferMatchCandidates TransferMatchCandidate[]
+  reversalMatchCandidates ReversalMatchCandidate[]
   obligations             Obligation[]
   incomeStreams           IncomeStream[]
   cashReserves            CashReserve[]
@@ -355,6 +356,8 @@ model Transaction {
   sinkingFundContribs     SinkingFundContribution[]
   recurringSeriesLinks    RecurringSeriesTransaction[]
   transferMatchCandidates TransferMatchCandidate[]
+  reversalCandidatesAsCharge    ReversalMatchCandidate[] @relation("ReversalChargeSide")
+  reversalCandidatesAsReversal  ReversalMatchCandidate[] @relation("ReversalReversalSide")
 
   @@unique([accountId, externalTransactionId])
   @@index([userId, date(sort: Desc)])
@@ -429,6 +432,49 @@ model TransferMatchCandidate {
   @@unique([transactionId, counterpartType, counterpartId])
   @@index([userId, status])
   @@map("transfer_match_candidates")
+  @@schema("app")
+}
+
+enum ReversalMatchStatus {
+  pending
+  confirmed
+  dismissed
+
+  @@schema("app")
+}
+
+// A candidate pairing proposed by the nightly reversal-matching job (see
+// matchReversals in @finance-app/finance-logic) for two same-account
+// transactions that look like a charge and its later reversal/refund --
+// e.g. a $432.28 charge followed by a $432.28 credit from the same
+// merchant. Unlike TransferMatchCandidate, both sides are always a real
+// bank Transaction (matchReversals' hard gates require same account/
+// currency, so there is no polymorphic counterpart to model here) --
+// `chargeTransactionId` is always the negative (money-out) side and
+// `reversalTransactionId` the positive (money-in) side, assigned from the
+// real amount signs at detection time, not from matchReversals' own
+// unordered {aId,bId} output (which carries no directional information).
+// Confirming a candidate never edits either Transaction row -- this is a
+// presentation/relationship layer over the existing ledger, not a rewrite
+// of it.
+model ReversalMatchCandidate {
+  id                     String              @id @default(cuid())
+  userId                 String              @map("user_id")
+  chargeTransactionId    String              @map("charge_transaction_id")
+  reversalTransactionId  String              @map("reversal_transaction_id")
+  confidenceScore        Decimal             @map("confidence_score") @db.Decimal(4, 3)
+  daysApart              Int                 @map("days_apart")
+  status                 ReversalMatchStatus @default(pending)
+  detectedAt             DateTime            @default(now()) @map("detected_at")
+  resolvedAt             DateTime?           @map("resolved_at")
+
+  user                AppUser     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chargeTransaction   Transaction @relation("ReversalChargeSide", fields: [chargeTransactionId], references: [id], onDelete: Cascade)
+  reversalTransaction Transaction @relation("ReversalReversalSide", fields: [reversalTransactionId], references: [id], onDelete: Cascade)
+
+  @@unique([chargeTransactionId, reversalTransactionId])
+  @@index([userId, status])
+  @@map("reversal_match_candidates")
   @@schema("app")
 }
 

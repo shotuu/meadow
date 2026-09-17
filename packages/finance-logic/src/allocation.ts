@@ -1,6 +1,52 @@
+import type { InstrumentType } from "./instrument-classification";
+
 export interface BucketHolding {
   bucketName: string;
   marketValue: number;
+}
+
+export interface InvestedSplitHolding {
+  bucketName: string;
+  marketValue: number;
+  instrumentType: InstrumentType;
+}
+
+export interface InvestedSplitResult {
+  /** Holdings with instrumentType !== "cash" -- the base for invested Core/Satellite strategy percentages and portfolio-drift evaluation. */
+  invested: BucketHolding[];
+  /** Sum of every instrumentType === "cash" holding's marketValue -- objectively identified settlement/residual brokerage cash. */
+  brokerageCash: number;
+}
+
+/**
+ * Splits holdings into the invested base used for strategy-bucket
+ * allocation percentages and drift, and a separate brokerage-cash total.
+ * Ordinary brokerage cash (instrumentType === "cash", identified
+ * objectively via classifyInstrumentType) is excluded from the invested
+ * denominator by default and never auto-assigned a strategy bucket -- see
+ * resolveStrategyBucketName's doc comment for the separate bucket-
+ * assignment axis this is deliberately kept apart from. Renormalization
+ * after exclusion is implicit: computeCurrentAllocation's percentages are
+ * relative to whatever holdings it's given, so feeding it only `invested`
+ * automatically excludes brokerage cash from the denominator, no separate
+ * renormalization step needed.
+ *
+ * Every caller that computes Core/Satellite allocation (Invest UI, Home's
+ * "Your plan," the worker's portfolio_drift alert, the AI export) must call
+ * this first so cash-exclusion semantics can never drift apart between
+ * call sites -- see PROGRESS.md's Phase 5 entry.
+ */
+export function splitInvestedFromBrokerageCash<T extends InvestedSplitHolding>(holdings: T[]): InvestedSplitResult {
+  const invested: BucketHolding[] = [];
+  let brokerageCash = 0;
+  for (const h of holdings) {
+    if (h.instrumentType === "cash") {
+      brokerageCash += h.marketValue;
+    } else {
+      invested.push({ bucketName: h.bucketName, marketValue: h.marketValue });
+    }
+  }
+  return { invested, brokerageCash };
 }
 
 export interface AllocationBucket {

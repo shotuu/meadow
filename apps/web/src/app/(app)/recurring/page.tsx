@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { formatMoney } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
+import { AppHeader } from "@/components/app-header";
 import { computeMonthlyEquivalent, convertCurrency, type UsdRateMap } from "@finance-app/finance-logic";
 
 const STATUS_VARIANT: Record<RecurringStatus, "default" | "destructive" | "secondary" | "outline"> = {
@@ -72,7 +73,7 @@ export default async function RecurringPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
-      <h1 className="text-2xl font-semibold">Recurring</h1>
+      <AppHeader title="Recurring" />
 
       {series.length === 0 && (
         <EmptyState

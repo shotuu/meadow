@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma, BudgetPeriod, SinkingFundRecurrence } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { getPeriodRange } from "@finance-app/finance-logic";
+import { revalidateHomeSurfaces, revalidatePlanSurfaces } from "@/lib/revalidate";
 
 export async function setBudget(formData: FormData) {
   const userId = await requireUserId();
@@ -42,7 +43,12 @@ export async function setBudget(formData: FormData) {
     }
   });
 
-  revalidatePath("/budgets");
+  revalidatePlanSurfaces();
+  revalidatePath(`/plan/budgets/${categoryId}`);
+  // Only monthly_reset/rollover_envelope categories can carry a budget via
+  // this action (SetBudgetDialog is only rendered for those two types), and
+  // those are exactly the types Home's/Plan's "this month" overview sums.
+  revalidateHomeSurfaces();
 }
 
 export async function setPrepaidCoverage(formData: FormData) {
@@ -63,7 +69,8 @@ export async function setPrepaidCoverage(formData: FormData) {
     update: { coverageMonths },
   });
 
-  revalidatePath("/budgets");
+  revalidatePlanSurfaces();
+  revalidatePath(`/plan/budgets/${categoryId}`);
 }
 
 export async function addSinkingFund(formData: FormData) {
@@ -86,7 +93,8 @@ export async function addSinkingFund(formData: FormData) {
     data: { userId, categoryId, name, targetAmount, currency, deadlineDate, recurrence },
   });
 
-  revalidatePath("/budgets");
+  revalidatePlanSurfaces();
+  revalidatePath(`/plan/budgets/${categoryId}`);
 }
 
 export async function contributeSinkingFund(formData: FormData) {
@@ -108,5 +116,6 @@ export async function contributeSinkingFund(formData: FormData) {
     }),
   ]);
 
-  revalidatePath("/budgets");
+  revalidatePlanSurfaces();
+  if (fund.categoryId) revalidatePath(`/plan/budgets/${fund.categoryId}`);
 }

@@ -4,6 +4,7 @@ import {
   computePortfolioDrift,
   latestHoldingsBySymbol,
   resolveStrategyBucketName,
+  splitInvestedFromBrokerageCash,
 } from "../allocation";
 
 describe("computeCurrentAllocation", () => {
@@ -86,6 +87,45 @@ describe("resolveStrategyBucketName", () => {
 
   it("falls back correctly with an empty overrides map", () => {
     expect(resolveStrategyBucketName("AMD", new Map())).toBe("Unclassified");
+  });
+});
+
+describe("splitInvestedFromBrokerageCash", () => {
+  it("excludes cash holdings from the invested list and sums them separately", () => {
+    const result = splitInvestedFromBrokerageCash([
+      { bucketName: "Core", marketValue: 800, instrumentType: "etf" },
+      { bucketName: "Satellite", marketValue: 200, instrumentType: "stock" },
+      { bucketName: "Unclassified", marketValue: 300, instrumentType: "cash" },
+    ]);
+    expect(result.invested).toEqual([
+      { bucketName: "Core", marketValue: 800 },
+      { bucketName: "Satellite", marketValue: 200 },
+    ]);
+    expect(result.brokerageCash).toBe(300);
+  });
+
+  it("sums multiple cash holdings across accounts", () => {
+    const result = splitInvestedFromBrokerageCash([
+      { bucketName: "Unclassified", marketValue: 100, instrumentType: "cash" },
+      { bucketName: "Unclassified", marketValue: 50, instrumentType: "cash" },
+    ]);
+    expect(result.invested).toEqual([]);
+    expect(result.brokerageCash).toBe(150);
+  });
+
+  it("renormalizes invested weights correctly once cash is excluded from the denominator", () => {
+    const { invested } = splitInvestedFromBrokerageCash([
+      { bucketName: "Core", marketValue: 900, instrumentType: "etf" },
+      { bucketName: "Core", marketValue: 1000, instrumentType: "cash" },
+    ]);
+    const current = computeCurrentAllocation(invested);
+    expect(current).toEqual([{ bucketName: "Core", marketValue: 900, currentWeightPct: 100 }]);
+  });
+
+  it("returns zero brokerage cash and every holding invested when nothing is cash", () => {
+    const result = splitInvestedFromBrokerageCash([{ bucketName: "Core", marketValue: 500, instrumentType: "stock" }]);
+    expect(result.brokerageCash).toBe(0);
+    expect(result.invested).toHaveLength(1);
   });
 });
 

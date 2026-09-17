@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Meadow",
     short_name: "Meadow",
     description: "Personal finance tracking, budgeting, and investment allocation.",
-    start_url: "/dashboard",
+    start_url: "/home",
     display: "standalone",
     background_color: "#fafbf2",
     theme_color: "#3A9979",

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { linkFinverseConnection } from "@finance-app/finverse-sync";
 import { requireUserId } from "@/lib/session";
 import { consumeFinverseState, FINVERSE_CALLBACK_PATH, FINVERSE_RESPONSE_COOKIE, finverseCookieOptions } from "@/lib/finverse-state";
+import { revalidateHomeSurfaces } from "@/lib/revalidate";
 
 function baseUrl(): string {
   if (!process.env.AUTH_URL) throw new Error("AUTH_URL must be set");
@@ -34,7 +35,8 @@ export async function GET(): Promise<Response> {
     if (typeof code !== "string" || !code || typeof state !== "string") throw new Error("Missing callback response");
     await consumeFinverseState(userId, state);
     await linkFinverseConnection(userId, code, new URL(FINVERSE_CALLBACK_PATH, baseUrl()).toString());
-    for (const path of ["/accounts", "/transactions", "/dashboard"]) revalidatePath(path);
+    for (const path of ["/accounts", "/transactions"]) revalidatePath(path);
+    revalidateHomeSurfaces();
     result = "success";
   } catch {
     // Provider errors may contain tokens; keep the callback log free of response payloads.

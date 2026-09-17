@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyInstrumentType, instrumentTypeLabel } from "../instrument-classification";
+import { classifyInstrumentType, instrumentTypeLabel, isLegacyInstrumentLabelTarget } from "../instrument-classification";
 
 describe("classifyInstrumentType", () => {
   it("manual override always wins, regardless of IBKR metadata", () => {
@@ -72,5 +72,22 @@ describe("instrumentTypeLabel", () => {
     expect(instrumentTypeLabel("etf")).toBe("ETFs");
     expect(instrumentTypeLabel("stock")).toBe("Stocks");
     expect(instrumentTypeLabel("unknown")).toBe("Unknown");
+  });
+});
+
+describe("isLegacyInstrumentLabelTarget", () => {
+  it("flags a target named after an instrument-type label with no matching current strategy bucket", () => {
+    expect(isLegacyInstrumentLabelTarget("Stocks", new Set(["Unclassified"]))).toBe(true);
+  });
+
+  it("does not flag a real strategy-bucket name like Core or Satellite", () => {
+    expect(isLegacyInstrumentLabelTarget("Core", new Set(["Core"]))).toBe(false);
+    expect(isLegacyInstrumentLabelTarget("Satellite", new Set())).toBe(false);
+  });
+
+  it("does not flag an instrument-type-label name if the user has deliberately named a real strategy bucket that same thing", () => {
+    // e.g. a user who genuinely creates a "Cash" strategy bucket via the assignment UI --
+    // amendment 7 preserves that door, so the heuristic must not punish it.
+    expect(isLegacyInstrumentLabelTarget("Cash", new Set(["Cash"]))).toBe(false);
   });
 });

@@ -153,11 +153,86 @@ softer consumer-social aesthetic.
 - Monetary amounts: `tabular-nums` applied via the `.font-amount` utility
   (see `globals.css`) so digits align in columns in tables/lists — a detail
   most scaffolded finance UIs skip.
+- **Three-tier hierarchy** (added in the UI/UX redesign's Phase 1, 2026-09-17),
+  applied via `apps/web/src/components/typography.tsx` rather than per-page
+  classes: `Answer` (large/bold — the headline figure a screen exists to
+  show: net worth, safe-to-spend, portfolio value), `SectionLabel` (medium —
+  supporting figures/labels: percentages, dates, drift, a card's own title),
+  `Meta` (small/muted — quiet technical detail: sync source, confidence,
+  classification). Use these instead of ad-hoc `text-2xl font-semibold` /
+  `text-sm text-muted-foreground` combinations so hierarchy stays consistent
+  as new screens are built.
+
+## Header system
+
+`apps/web/src/components/app-header.tsx` (`AppHeader`) replaces every
+hand-rolled per-page title/action row, with two mutually exclusive modes so
+a route never stacks a global brand bar on top of its own title bar:
+
+- **Sub mode** (drill-downs and the secondary destinations — Accounts,
+  Categories, Alerts, Settings, a holding detail page): back (optional) /
+  title / subtitle (optional) / one primary action / overflow menu. At most
+  one action ever renders inline; anything else (CSV import, Connect a
+  bank, Sync now, management actions like "Correct type") goes in the
+  overflow `DropdownMenu` instead of competing for header space — this is
+  what fixed Accounts' old 5-button header row and Transactions'
+  Import-CSV-vs-Add-transaction prominence problem. The overflow menu is
+  `modal={false}` because several of its items are full `Dialog` triggers
+  (Import CSV, Connect IBKR, ...), and Radix's default modal focus-trap on
+  `DropdownMenu` conflicts with a nested `Dialog`'s own trap.
+- **Root mode** (the 4 primary destinations — Home/Activity/Invest/Plan):
+  minimal brand mark + a `SecondaryMenu` (Accounts/Categories/Alerts/
+  Settings), no title text — the content itself establishes context. On
+  mobile this is the page's only top chrome (`md:hidden`); on desktop the
+  persistent `DesktopNav` bar already covers the same role, so root mode
+  renders nothing there to avoid a redundant second brand/menu bar.
+
+## Cards vs. canvas
+
+Cards are the exception, not the default. Reserve `Card` for content that
+genuinely needs a bounded surface — a distinct status assessment, a call to
+action, or a group that must visually separate from an unrelated adjacent
+group on a dense page. Most content sits directly on the page canvas,
+separated by hairline dividers (`border-b`, matching the `border` token) for
+grouping within a section and generous vertical spacing between sections,
+rather than another bordered rectangle. This is a deliberate correction from
+the app's earlier "everything is a `Card`" pattern, which read as an admin
+dashboard rather than a considered product. Applied screen-by-screen as each
+part of the app gets its UI/UX redesign pass, not retrofitted everywhere at
+once.
+
+## Badges
+
+`outline` = system-suggested / lower-confidence (an unconfirmed AI category,
+an auto-resolved strategy bucket, a pending transfer match); `secondary` =
+confirmed / user-set (a manually corrected category, a user-assigned
+strategy bucket). High-confidence AI categorization (at or above
+`LOW_CONFIDENCE_THRESHOLD`, currently `0.7` — see
+`packages/categorization-ai/src/constants.ts`) renders no badge at all;
+users should only see an indicator when Meadow is actually uncertain, not
+every time AI happened to run. Import that threshold from the package's
+`/constants` subpath (`@finance-app/categorization-ai/constants`), not the
+package root, from any client component — the root `index.ts` barrel also
+re-exports the Gemini/Prisma-touching categorization job, which pulls
+`pg`/`@finance-app/db` into the browser bundle if a `"use client"` file
+imports from it directly.
+
+## Motion
+
+`globals.css` applies a blanket `prefers-reduced-motion: reduce` override
+(collapses all animation/transition durations to near-zero) so every
+current and future transition — the mobile tab bar's spring "pop", the
+theme-toggle crossfade, dialog/dropdown enter-exit, future chart
+transitions — respects it automatically, without needing a `motion-reduce:`
+prefix at each call site.
 
 ## Mobile chrome (Konsta UI)
 
 Konsta UI wraps the installed-PWA navigation chrome (bottom tab bar, sheets)
 using the iOS/Material presets, themed with the same primary/background
-tokens above via its `theme` prop — see `src/components/mobile-shell.tsx`.
-Desktop/tablet viewports use a standard shadcn sidebar layout instead; Konsta
-only renders below the `md` breakpoint.
+tokens above via its `theme` prop — see `src/components/app-nav.tsx`
+(`MobileTabbar`). Desktop/tablet viewports use a sticky top nav bar instead
+(`DesktopNav`, same file), not a sidebar; Konsta's tab bar only renders
+below the `md` breakpoint. (This section previously described a
+`mobile-shell.tsx` file and a shadcn sidebar layout — neither exists;
+corrected 2026-09-17.)

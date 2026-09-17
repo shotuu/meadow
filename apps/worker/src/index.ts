@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { prisma, withAdvisoryLock, closeLockPool } from "@finance-app/db";
-import { computeBalanceSnapshots, evaluateAlertRules, matchTransfers, recomputeRecurringSeries, refreshExchangeRates, runCategorizationBatch, syncFinverseAccounts, syncIbkrFlexAccounts, syncPlaidAccounts } from "./jobs/index.js";
+import { computeBalanceSnapshots, evaluateAlertRules, matchReversals, matchTransfers, recomputeRecurringSeries, refreshExchangeRates, runCategorizationBatch, syncFinverseAccounts, syncIbkrFlexAccounts, syncPlaidAccounts } from "./jobs/index.js";
 
 let running: Promise<void> | undefined;
 let stopping = false;
@@ -26,6 +26,7 @@ async function refreshIfDue(): Promise<void> {
       await runCategorizationBatch();
       await recomputeRecurringSeries();
       await matchTransfers();
+      await matchReversals();
       await computeBalanceSnapshots();
       await evaluateAlertRules();
       if (failures.length) throw new AggregateError(failures, "Provider refresh incomplete");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,7 +38,9 @@ export function NewTransactionDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>Add transaction</Button>
+        <Button size="icon" aria-label="Add transaction" title="Add transaction">
+          <Plus className="size-4" />
+        </Button>
       </DialogTrigger>
       <DialogContent>
         <form

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createPlaidLinkToken, linkPlaidItem } from "@finance-app/plaid-sync";
 import { requireUserId } from "@/lib/session";
+import { revalidateHomeSurfaces } from "@/lib/revalidate";
 
 export async function createLinkToken(): Promise<string> {
   const userId = await requireUserId();
@@ -19,7 +20,7 @@ export async function completePlaidLink(publicToken: string, institutionName: st
 
   revalidatePath("/accounts");
   revalidatePath("/transactions");
-  revalidatePath("/dashboard");
+  revalidateHomeSurfaces();
 
   return sync;
 }

@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import { ThemeProvider, useTheme } from "next-themes";
 import { KonstaProvider } from "konsta/react";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const noopSubscribe = () => () => {};
 
@@ -38,8 +39,10 @@ function KonstaThemeBridge({ children }: { children: React.ReactNode }) {
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-      <KonstaThemeBridge>{children}</KonstaThemeBridge>
-      <Toaster />
+      <TooltipProvider>
+        <KonstaThemeBridge>{children}</KonstaThemeBridge>
+        <Toaster />
+      </TooltipProvider>
     </ThemeProvider>
   );
 }

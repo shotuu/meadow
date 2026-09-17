@@ -1,10 +1,13 @@
 import { computeRecurringBudgetProgress, readAccountBalances, readCurrentHoldings, readUsdRates, requireConversion } from "@finance-app/finance-data";
 import { prisma, type AlertRule } from "@finance-app/db";
 import {
+  classifyInstrumentType,
   computeCurrentAllocation,
   computePortfolioDrift,
   countPeriodsUntil,
   resolveStrategyBucketName,
+  splitInvestedFromBrokerageCash,
+  type InstrumentType,
 } from "@finance-app/finance-logic";
 
 /**
@@ -245,24 +248,35 @@ async function evaluateSinkingFundUnderfunded(rule: AlertRule): Promise<void> {
  * and drift threshold live on each TargetAllocation row, so this rule
  * simply diffs "current holdings" against "every configured target" for
  * the rule's user. No target rows configured means nothing to check yet.
+ * Brokerage cash is excluded from the denominator via
+ * splitInvestedFromBrokerageCash -- the exact same shared function Invest
+ * and the AI export use, so this alert can never disagree with what the
+ * user sees on screen.
  */
 async function evaluatePortfolioDrift(rule: AlertRule): Promise<void> {
   const targetRows = await prisma.targetAllocation.findMany({ where: { userId: rule.userId } });
   if (targetRows.length === 0) return;
 
-  const [holdings, bucketAssignments] = await Promise.all([
+  const [holdings, bucketAssignments, instrumentTypeOverrides] = await Promise.all([
     readCurrentHoldings(rule.userId),
     prisma.holdingBucketAssignment.findMany({ where: { userId: rule.userId } }),
+    prisma.instrumentTypeOverride.findMany({ where: { userId: rule.userId } }),
   ]);
   const overridesBySymbol = new Map(bucketAssignments.map((a) => [a.symbol, a.bucketName]));
-  const latest = holdings;
+  const instrumentOverridesBySymbol = new Map(instrumentTypeOverrides.map((o) => [o.symbol, o.instrumentType as InstrumentType]));
+  const latest = holdings.filter((h) => Number(h.quantity) !== 0);
   const rates = await readUsdRates();
-  const current = computeCurrentAllocation(
-    latest.map((h) => ({
-      bucketName: resolveStrategyBucketName(h.symbol, overridesBySymbol),
-      marketValue: requireConversion(Number(h.marketValue), h.currency, "USD", rates),
-    }))
-  );
+  const classified = latest.map((h) => ({
+    bucketName: resolveStrategyBucketName(h.symbol, overridesBySymbol),
+    marketValue: requireConversion(Number(h.marketValue), h.currency, "USD", rates),
+    instrumentType: classifyInstrumentType({
+      ibkrAssetCategory: h.securityType,
+      ibkrSubCategory: h.ibkrSubCategory,
+      manualOverride: instrumentOverridesBySymbol.get(h.symbol) ?? null,
+    }).instrumentType,
+  }));
+  const { invested } = splitInvestedFromBrokerageCash(classified);
+  const current = computeCurrentAllocation(invested);
   const targets = targetRows.map((t) => ({
     bucketName: t.bucketName,
     targetWeightPct: Number(t.targetWeightPct),

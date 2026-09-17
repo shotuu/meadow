@@ -9,6 +9,7 @@ import {
 } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { advanceObligationDueDate } from "@finance-app/finance-logic";
+import { revalidateHomeSurfaces } from "@/lib/revalidate";
 
 export async function createObligation(formData: FormData) {
   const userId = await requireUserId();
@@ -35,7 +36,8 @@ export async function createObligation(formData: FormData) {
   });
 
   revalidatePath("/planning");
-  revalidatePath("/dashboard");
+  revalidatePath("/plan");
+  revalidateHomeSurfaces();
 }
 
 export async function markObligationPaid(formData: FormData) {
@@ -63,7 +65,8 @@ export async function markObligationPaid(formData: FormData) {
   });
 
   revalidatePath("/planning");
-  revalidatePath("/dashboard");
+  revalidatePath("/plan");
+  revalidateHomeSurfaces();
 }
 
 export async function createIncomeStream(formData: FormData) {
@@ -106,6 +109,7 @@ export async function createIncomeStream(formData: FormData) {
   });
 
   revalidatePath("/planning");
+  revalidatePath("/plan");
 }
 
 export async function deactivateIncomeStream(incomeStreamId: string) {
@@ -117,6 +121,7 @@ export async function deactivateIncomeStream(incomeStreamId: string) {
   });
 
   revalidatePath("/planning");
+  revalidatePath("/plan");
 }
 
 export async function setCashReserve(formData: FormData) {
@@ -142,7 +147,8 @@ export async function setCashReserve(formData: FormData) {
   });
 
   revalidatePath("/planning");
-  revalidatePath("/dashboard");
+  revalidatePath("/plan");
+  revalidateHomeSurfaces();
 }
 
 export async function deleteCashReserve(cashReserveId: string) {
@@ -151,5 +157,6 @@ export async function deleteCashReserve(cashReserveId: string) {
   await prisma.cashReserve.deleteMany({ where: { id: cashReserveId, userId } });
 
   revalidatePath("/planning");
-  revalidatePath("/dashboard");
+  revalidatePath("/plan");
+  revalidateHomeSurfaces();
 }

@@ -34,6 +34,34 @@ export function instrumentTypeLabel(instrumentType: InstrumentType): string {
   return INSTRUMENT_TYPE_LABELS[instrumentType];
 }
 
+const ALL_INSTRUMENT_TYPES: InstrumentType[] = [
+  "stock",
+  "etf",
+  "fund",
+  "bond",
+  "cash",
+  "crypto",
+  "option",
+  "other",
+  "unknown",
+];
+const INSTRUMENT_TYPE_LABEL_SET: ReadonlySet<string> = new Set(ALL_INSTRUMENT_TYPES.map((t) => INSTRUMENT_TYPE_LABELS[t]));
+
+/**
+ * True when a TargetAllocation.bucketName is almost certainly a leftover
+ * from before instrument type and strategy bucket were split into separate
+ * concepts (e.g. a target literally named "Stocks" at 100%) rather than a
+ * real user-chosen strategy bucket: it collides with an instrument-type
+ * display label and no strategy bucket of that same name is currently in
+ * use. Shared by Home's stale-target banner, the AI export's
+ * calculationWarnings, and Invest's guided migration flow so all three
+ * surfaces apply the exact same heuristic and can never disagree about
+ * which target is stale.
+ */
+export function isLegacyInstrumentLabelTarget(bucketName: string, currentStrategyBucketNames: ReadonlySet<string>): boolean {
+  return INSTRUMENT_TYPE_LABEL_SET.has(bucketName) && !currentStrategyBucketNames.has(bucketName);
+}
+
 const STK_SUBCATEGORY_MAP: Record<string, InstrumentType> = {
   ETF: "etf",
   "CLOSED-END FUND": "fund",

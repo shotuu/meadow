@@ -8,6 +8,7 @@ export * from "./allocation";
 export * from "./instrument-classification";
 export * from "./balance";
 export * from "./transfer-matching";
+export * from "./reversal-sync";
 export * from "./obligations";
 export * from "./cash-policy";
 export * from "./categorization-rules";

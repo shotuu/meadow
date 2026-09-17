@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export type ExportMode = "standard" | "privacy_safe";
 
@@ -31,6 +31,15 @@ export type ExportMode = "standard" | "privacy_safe";
  * reversal/refund matcher (matchReversals, not the generic transfer
  * matcher) to require a merchant/description match, not just an exact
  * opposite amount within a date window.
+ *
+ * v4: strategyAllocation.current/drift now exclude ordinary brokerage cash
+ * (instrumentType === "cash") from the denominator by default, matching the
+ * Invest UI and the worker's portfolio_drift alert -- see
+ * splitInvestedFromBrokerageCash in @finance-app/finance-logic. Adds
+ * investments.brokerageCashInDefaultCurrencyApprox (the excluded total,
+ * shown separately, never silently dropped). instrumentType allocation
+ * (investments.allocation, the security-type dimension) is unaffected --
+ * cash still appears there as its own bucket, that's a different axis.
  */
 export interface AiFinancialContextExport {
   schemaVersion: typeof SCHEMA_VERSION;
@@ -69,12 +78,14 @@ export interface AiFinancialContextExport {
     allocation: {
       current: { bucketName: string; marketValueInDefaultCurrencyApprox: number; currentWeightPct: number }[];
     };
-    /** Strategy-bucket-based grouping (user-defined, e.g. "core"/"satellite") -- answers "how far from my target?" and "how concentrated?" */
+    /** Strategy-bucket-based grouping (user-defined, e.g. "core"/"satellite") -- answers "how far from my target?" and "how concentrated?" Ordinary brokerage cash is excluded from this denominator by default; see brokerageCashInDefaultCurrencyApprox below. */
     strategyAllocation: {
       current: { bucketName: string; marketValueInDefaultCurrencyApprox: number; currentWeightPct: number }[];
       targets: { bucketName: string; targetWeightPct: number; driftThresholdPct: number }[];
       drift: { bucketName: string; currentWeightPct: number; targetWeightPct: number; driftPct: number; isDrifted: boolean }[];
     };
+    /** Sum of every holding with instrumentType "cash" -- objectively identified settlement/residual brokerage cash, excluded from strategyAllocation's denominator, never silently dropped or folded into an "Unclassified" bucket. */
+    brokerageCashInDefaultCurrencyApprox: number;
     portfolioHistoryRecent: { asOfDate: string; valueInDefaultCurrencyApprox: number | null; hasGap: boolean }[];
   };
 

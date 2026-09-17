@@ -1,4 +1,4 @@
-import { TrendingUp, TrendingDown, ArrowLeftRight, Pin, PinOff, type LucideIcon } from "lucide-react";
+import { TrendingUp, TrendingDown, ArrowLeftRight, type LucideIcon } from "lucide-react";
 import { prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { categoryColorVar } from "@/lib/category-color";
 import { NewCategoryDialog } from "./new-category-dialog";
 import { BudgetTypeSelect } from "./budget-type-select";
-import { archiveCategory, unarchiveCategory, toggleDashboardPin } from "./actions";
+import { archiveCategory, unarchiveCategory } from "./actions";
+import { AppHeader } from "@/components/app-header";
+import { SectionLabel } from "@/components/typography";
 
 const KIND_ICON: Record<string, LucideIcon> = {
   income: TrendingUp,
@@ -33,20 +35,17 @@ export default async function CategoriesPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Categories</h1>
-        <NewCategoryDialog />
-      </div>
+      <AppHeader title="Categories" primaryAction={<NewCategoryDialog />} />
 
       {(["income", "expense", "transfer"] as const).map((kind) => {
         if (groups[kind].length === 0) return null;
         const KindIcon = KIND_ICON[kind];
         return (
           <div key={kind} className="space-y-3">
-            <h2 className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            <SectionLabel className="flex items-center gap-1.5 capitalize">
               <KindIcon className="size-4" />
               {kind}
-            </h2>
+            </SectionLabel>
             <Card>
               <CardContent className="divide-y p-0">
                 {groups[kind].map((category) => (
@@ -60,23 +59,6 @@ export default async function CategoriesPage() {
                     </span>
                     <div className="flex items-center gap-3">
                       <BudgetTypeSelect categoryId={category.id} value={category.budgetType} />
-                      {category.budgetType !== "none" && (
-                        <form action={toggleDashboardPin.bind(null, category.id)}>
-                          <Button
-                            type="submit"
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={category.pinnedToDashboard ? "Unpin from dashboard" : "Pin to dashboard"}
-                            title={category.pinnedToDashboard ? "Unpin from dashboard" : "Pin to dashboard"}
-                          >
-                            {category.pinnedToDashboard ? (
-                              <Pin className="size-4 fill-current text-primary" />
-                            ) : (
-                              <PinOff className="size-4 text-muted-foreground" />
-                            )}
-                          </Button>
-                        </form>
-                      )}
                       <form action={archiveCategory.bind(null, category.id)}>
                         <Button type="submit" variant="ghost" size="sm">
                           Archive
@@ -93,7 +75,7 @@ export default async function CategoriesPage() {
 
       {archivedCategories.length > 0 && (
         <div className="space-y-3">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Archived</h2>
+          <SectionLabel>Archived</SectionLabel>
           <Card>
             <CardContent className="divide-y p-0">
               {archivedCategories.map((category) => (

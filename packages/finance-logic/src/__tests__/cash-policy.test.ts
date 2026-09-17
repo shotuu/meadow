@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeInvestableCash, computeUncommittedCash } from "../cash-policy";
+import { computeGenuinelyFreeCashByCurrency, computeInvestableCash, computeUncommittedCash } from "../cash-policy";
 
 describe("computeUncommittedCash", () => {
   it("subtracts a single reserve from total cash in that currency", () => {
@@ -212,5 +212,95 @@ describe("computeInvestableCash", () => {
       30
     );
     expect(result.USD).toBe(0);
+  });
+});
+
+describe("computeGenuinelyFreeCashByCurrency", () => {
+  const now = new Date("2026-09-14");
+
+  function assertReconciles(line: ReturnType<typeof computeGenuinelyFreeCashByCurrency>[number]) {
+    expect(line.eligibleCash - line.reservedCash - line.relevantObligations).toBeCloseTo(line.genuinelyFree, 8);
+  }
+
+  it("reconciles exactly in the ordinary case (reserve and obligation both fit within cash)", () => {
+    const [line] = computeGenuinelyFreeCashByCurrency(
+      [{ currency: "USD", balance: 10000 }],
+      [{ currency: "USD", targetAmount: 3000 }],
+      [{ currency: "USD", amount: 1500, fundedAmount: 0, priority: "mandatory", nextDueDate: new Date("2026-09-20"), isActive: true }],
+      now
+    );
+    expect(line).toEqual({ currency: "USD", eligibleCash: 10000, reservedCash: 3000, relevantObligations: 1500, genuinelyFree: 5500 });
+    assertReconciles(line);
+  });
+
+  it("caps the reserved-cash line at eligible cash when the reserve target exceeds it, and still reconciles", () => {
+    const [line] = computeGenuinelyFreeCashByCurrency(
+      [{ currency: "USD", balance: 500 }],
+      [{ currency: "USD", targetAmount: 2000 }],
+      [],
+      now
+    );
+    expect(line.eligibleCash).toBe(500);
+    expect(line.reservedCash).toBe(500);
+    expect(line.relevantObligations).toBe(0);
+    expect(line.genuinelyFree).toBe(0);
+    assertReconciles(line);
+  });
+
+  it("caps the obligations line at what's left after reserves, and still reconciles", () => {
+    const [line] = computeGenuinelyFreeCashByCurrency(
+      [{ currency: "USD", balance: 1000 }],
+      [{ currency: "USD", targetAmount: 300 }],
+      [{ currency: "USD", amount: 5000, fundedAmount: 0, priority: "mandatory", nextDueDate: new Date("2026-09-20"), isActive: true }],
+      now
+    );
+    expect(line.eligibleCash).toBe(1000);
+    expect(line.reservedCash).toBe(300);
+    expect(line.relevantObligations).toBe(700);
+    expect(line.genuinelyFree).toBe(0);
+    assertReconciles(line);
+  });
+
+  it("handles multiple currencies independently, each reconciling on its own", () => {
+    const lines = computeGenuinelyFreeCashByCurrency(
+      [
+        { currency: "SGD", balance: 35000 },
+        { currency: "USD", balance: 18400 },
+      ],
+      [{ currency: "SGD", targetAmount: 20000 }],
+      [{ currency: "USD", amount: 2000, fundedAmount: 500, priority: "mandatory", nextDueDate: new Date("2026-09-15"), isActive: true }],
+      now
+    );
+    const byCurrency = Object.fromEntries(lines.map((l) => [l.currency, l]));
+    expect(byCurrency.SGD).toEqual({ currency: "SGD", eligibleCash: 35000, reservedCash: 20000, relevantObligations: 0, genuinelyFree: 15000 });
+    expect(byCurrency.USD).toEqual({ currency: "USD", eligibleCash: 18400, reservedCash: 0, relevantObligations: 1500, genuinelyFree: 16900 });
+    lines.forEach(assertReconciles);
+  });
+
+  it("produces a zeroed, reconciling line for an obligation in a currency with no cash and no reserve at all", () => {
+    const lines = computeGenuinelyFreeCashByCurrency(
+      [],
+      [],
+      [{ currency: "EUR", amount: 200, fundedAmount: 0, priority: "mandatory", nextDueDate: new Date("2026-09-15"), isActive: true }],
+      now
+    );
+    expect(lines).toEqual([{ currency: "EUR", eligibleCash: 0, reservedCash: 0, relevantObligations: 0, genuinelyFree: 0 }]);
+    lines.forEach(assertReconciles);
+  });
+
+  it("ignores non-mandatory and out-of-window obligations in the relevant-obligations line, matching computeInvestableCash", () => {
+    const [line] = computeGenuinelyFreeCashByCurrency(
+      [{ currency: "USD", balance: 5000 }],
+      [],
+      [
+        { currency: "USD", amount: 1000, fundedAmount: 0, priority: "discretionary", nextDueDate: new Date("2026-09-15"), isActive: true },
+        { currency: "USD", amount: 1000, fundedAmount: 0, priority: "mandatory", nextDueDate: new Date("2027-01-01"), isActive: true },
+      ],
+      now,
+      30
+    );
+    expect(line.relevantObligations).toBe(0);
+    expect(line.genuinelyFree).toBe(5000);
+    assertReconciles(line);
   });
 });

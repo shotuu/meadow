@@ -13,6 +13,7 @@ import { NewIncomeStreamDialog } from "./new-income-stream-dialog";
 import { DeactivateIncomeStreamButton } from "./deactivate-income-stream-button";
 import { SetCashReserveDialog } from "./set-cash-reserve-dialog";
 import { DeleteCashReserveButton } from "./delete-cash-reserve-button";
+import { AppHeader } from "@/components/app-header";
 
 const FUNDING_STATUS_LABEL: Record<string, string> = {
   unfunded: "Unfunded",
@@ -49,7 +50,7 @@ export default async function PlanningPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
-      <h1 className="text-2xl font-semibold">Planning</h1>
+      <AppHeader title="Planning" />
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">

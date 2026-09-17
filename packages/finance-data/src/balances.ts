@@ -97,3 +97,71 @@ export async function readPortfolioHistory(userId: string, currency: string, acc
   }
   return result;
 }
+
+export interface NetWorthSnapshot {
+  asOfDate: Date;
+  totalAssets: number | null;
+  totalLiabilities: number | null;
+  netWorth: number | null;
+  /** true if a rate was missing for some account on this day -- the totals above are null rather than a silently-wrong partial sum. */
+  hasGap: boolean;
+}
+
+/**
+ * One point per day that has at least one AccountBalanceSnapshot row,
+ * valued in a single reporting currency using that day's historical FX
+ * rate (mirrors readPortfolioHistory's approach). Originally private to
+ * the AI export builder (computeNetWorthHistory); extracted here so Home's
+ * net-worth chart uses the exact same real calculation rather than a
+ * second implementation. Accepts an optional transaction client so a
+ * caller assembling several reads (e.g. an export) can run them all
+ * against one consistent database snapshot instead of the default
+ * singleton.
+ */
+export async function readNetWorthHistory(
+  userId: string,
+  accounts: { id: string; classification: string }[],
+  currency: string,
+  client: Prisma.TransactionClient = prisma
+): Promise<NetWorthSnapshot[]> {
+  const classificationById = new Map(accounts.map((a) => [a.id, a.classification]));
+  const snapshots = await client.accountBalanceSnapshot.findMany({
+    where: { userId },
+    orderBy: { asOfDate: "asc" },
+    select: { accountId: true, asOfDate: true, balance: true, currency: true },
+  });
+  const byDay = new Map<string, typeof snapshots>();
+  for (const row of snapshots) {
+    const day = row.asOfDate.toISOString().slice(0, 10);
+    const group = byDay.get(day) ?? [];
+    group.push(row);
+    byDay.set(day, group);
+  }
+  const result: NetWorthSnapshot[] = [];
+  for (const [day, rows] of byDay) {
+    const asOfDate = new Date(day);
+    const rates = await readUsdRates(asOfDate, client);
+    let assets = 0;
+    let liabilities = 0;
+    let hasGap = false;
+    for (const row of rows) {
+      const classification = classificationById.get(row.accountId);
+      if (!classification) continue;
+      const converted = convertCurrency(Number(row.balance), row.currency, currency, rates);
+      if (converted === null) {
+        hasGap = true;
+        continue;
+      }
+      if (classification === "asset") assets += converted;
+      else liabilities += converted;
+    }
+    result.push({
+      asOfDate,
+      totalAssets: hasGap ? null : assets,
+      totalLiabilities: hasGap ? null : liabilities,
+      netWorth: hasGap ? null : assets + liabilities,
+      hasGap,
+    });
+  }
+  return result;
+}

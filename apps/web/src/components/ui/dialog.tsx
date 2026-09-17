@@ -61,7 +61,17 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // max-h/overflow-y matches the same "2rem total margin" idiom
+          // max-w already uses above (calc(100%-2rem)) rather than a fixed
+          // vh fraction -- so a dialog whose content is taller than the
+          // viewport (a long form on a short phone screen, keyboard open,
+          // landscape orientation, ...) scrolls as one unit inside its own
+          // rounded frame instead of overflowing off the top/bottom edges
+          // with its footer actions unreachable. 100dvh (not 100vh) so a
+          // mobile browser's collapsing address bar doesn't leave a
+          // pocket of dead space or clip content by the same margin it's
+          // trying to reserve.
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}

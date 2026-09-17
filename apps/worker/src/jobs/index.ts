@@ -8,6 +8,7 @@ import { recomputeRecurringSeriesForAllUsers } from "./recurring.js";
 import { refreshExchangeRates as refreshExchangeRatesImpl } from "./exchange-rates.js";
 import { evaluateAlertRulesForAllUsers } from "./alerts.js";
 import { matchTransfersForAllUsers } from "./transfer-matching.js";
+import { matchReversalsForAllUsers } from "./reversal-matching.js";
 
 export async function syncPlaidAccounts(): Promise<void> {
   const items = await prisma.plaidItem.findMany({ where: { status: "active" } });
@@ -87,4 +88,9 @@ export async function computeBalanceSnapshots(): Promise<void> {
 export async function matchTransfers(): Promise<void> {
   await matchTransfersForAllUsers();
   console.log("[worker] matchTransfers: done");
+}
+
+export async function matchReversals(): Promise<void> {
+  await matchReversalsForAllUsers();
+  console.log("[worker] matchReversals: done");
 }

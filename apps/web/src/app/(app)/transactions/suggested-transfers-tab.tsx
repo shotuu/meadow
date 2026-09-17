@@ -102,11 +102,17 @@ function TransferMatchRowItem({ row }: { row: TransferMatchRow }) {
 export function SuggestedTransfersTab({
   rows,
   crossCurrencyRows,
+  suppressEmptyState = false,
 }: {
   rows: TransferMatchRow[];
   crossCurrencyRows: CrossCurrencyRow[];
+  /** Set when a sibling section (e.g. suggested reversals) already has
+   * content, so this component's own "nothing here" empty state would
+   * otherwise sit confusingly next to real content. */
+  suppressEmptyState?: boolean;
 }) {
   if (rows.length === 0 && crossCurrencyRows.length === 0) {
+    if (suppressEmptyState) return null;
     return (
       <EmptyState
         icon={ArrowRightLeft}

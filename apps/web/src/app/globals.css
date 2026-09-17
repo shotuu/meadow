@@ -148,3 +148,17 @@
     white-space: nowrap;
   }
 }
+
+/* Applies to every current and future animation/transition (the mobile tab
+   pill spring, theme-toggle crossfade, dialog/dropdown enter-exit, chart
+   transitions) without needing a motion-reduce: prefix at each call site. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

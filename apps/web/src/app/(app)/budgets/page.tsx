@@ -1,8 +1,10 @@
+import Link from "next/link";
 import { Wallet, Target, CalendarClock } from "lucide-react";
 import { prisma, Prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import { computeRequiredContribution } from "@finance-app/finance-logic";
 import { computePrepaidCoverageProgress, computeRecurringBudgetProgress } from "@/lib/budget-progress";
 import { SetBudgetDialog } from "./set-budget-dialog";
@@ -12,12 +14,16 @@ import { PeriodChart } from "./period-chart";
 import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
+import { AppHeader } from "@/components/app-header";
 
 type CategoryWithBudgetData = Prisma.CategoryGetPayload<{
   include: { budgets: true; sinkingFunds: true; prepaidCoverage: true };
 }>;
 
-export default async function BudgetsPage() {
+// Extracted so /plan (the real primary destination as of the nav-shell
+// phase) and this legacy /budgets route can share one implementation while
+// rendering AppHeader in different modes.
+export async function BudgetsBody({ headerMode = "sub" }: { headerMode?: "root" | "sub" }) {
   const userId = await requireUserId();
   const now = new Date();
 
@@ -42,7 +48,21 @@ export default async function BudgetsPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-6 space-y-8">
-      <h1 className="text-2xl font-semibold">Budgets</h1>
+      {headerMode === "root" ? (
+        <AppHeader mode="root" pageTitle="Budgets" />
+      ) : (
+        <AppHeader
+          title="Budgets"
+          overflow={
+            <Button variant="ghost" asChild>
+              <Link href="/planning">
+                <CalendarClock className="size-4" />
+                Planning
+              </Link>
+            </Button>
+          }
+        />
+      )}
 
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
@@ -97,6 +117,10 @@ export default async function BudgetsPage() {
   );
 }
 
+export default function BudgetsPage() {
+  return <BudgetsBody headerMode="sub" />;
+}
+
 async function RecurringBudgetCard({
   category,
   userId,
@@ -127,7 +151,7 @@ async function RecurringBudgetCard({
     );
   }
 
-  const { remaining, rolledOverAmount, safePerDay, progressValue, periods } = await computeRecurringBudgetProgress(
+  const { remaining, rolledOverAmount, safePerDay, progressValue, periods, conversionIncomplete } = await computeRecurringBudgetProgress(
     userId,
     category,
     budget,
@@ -163,6 +187,11 @@ async function RecurringBudgetCard({
         </div>
         {showPeriodChart && periods && (
           <PeriodChart periods={periods} budgetAmount={Number(budget.amount)} currency={budget.currency} />
+        )}
+        {conversionIncomplete && (
+          <p className="text-xs text-muted-foreground">
+            Some transactions couldn&apos;t be converted to {budget.currency} (exchange rate not yet available) — this total may be incomplete.
+          </p>
         )}
       </CardContent>
     </Card>

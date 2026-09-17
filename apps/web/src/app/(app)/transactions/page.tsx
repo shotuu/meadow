@@ -1,10 +1,12 @@
-import { Wallet, Receipt } from "lucide-react";
+import Link from "next/link";
+import { Wallet, Receipt, Repeat, ArrowRightLeft } from "lucide-react";
 import { prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LOW_CONFIDENCE_THRESHOLD } from "@finance-app/categorization-ai";
+import { LOW_CONFIDENCE_THRESHOLD } from "@finance-app/categorization-ai/constants";
 import { NewTransactionDialog } from "./new-transaction-dialog";
 import { ImportCsvDialog } from "./import-csv-dialog";
 import { CategoryPicker } from "./category-picker";
@@ -12,10 +14,14 @@ import { CategoryFilter } from "./category-filter";
 import { CategoryPieChart } from "./category-pie-chart";
 import { TransactionsPagination } from "./pagination";
 import { SpendRangeFilter } from "./spend-range-filter";
+import { SearchInput } from "./search-input";
 import { SuggestedTransfersTab, type TransferMatchRow } from "./suggested-transfers-tab";
+import { SuggestedReversalsSection, type ReversalMatchRow } from "./suggested-reversals-section";
+import { ReversedTransactionRow, type ReversedPairSide } from "./reversed-transaction-row";
 import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
+import { AppHeader } from "@/components/app-header";
 import { SPEND_RANGE_LABEL, SPEND_RANGE_KINDS } from "@/lib/spend-range";
 import {
   resolveSpendRange,
@@ -57,21 +63,39 @@ type TransactionRowData = {
 
 const PAGE_SIZE = 50;
 
-export default async function TransactionsPage({
+// Extracted so /activity (the real primary destination as of the nav-shell
+// phase) and this legacy /transactions route can share one implementation
+// while rendering AppHeader in different modes.
+const TAB_VALUES = ["all", "review", "transfers"] as const;
+
+export async function TransactionsBody({
   searchParams,
+  headerMode = "sub",
 }: {
-  searchParams: Promise<{ category?: string; page?: string; range?: string }>;
+  searchParams: Promise<{ category?: string; page?: string; range?: string; tab?: string; q?: string }>;
+  headerMode?: "root" | "sub";
 }) {
   const userId = await requireUserId();
-  const { category: categoryParam, page: pageParam, range: rangeParam } = await searchParams;
+  const { category: categoryParam, page: pageParam, range: rangeParam, tab: tabParam, q: queryParam } = await searchParams;
+  const initialTab = TAB_VALUES.includes(tabParam as (typeof TAB_VALUES)[number]) ? (tabParam as (typeof TAB_VALUES)[number]) : "all";
   const categoryFilter = categoryParam && categoryParam !== "__all__" ? categoryParam : undefined;
+  const searchQuery = queryParam?.trim() || undefined;
   const page = Math.max(1, Number(pageParam) || 1);
   const spendRange: SpendRangeKind = SPEND_RANGE_KINDS.includes(rangeParam as SpendRangeKind)
     ? (rangeParam as SpendRangeKind)
     : "mtd";
-  const transactionWhere = { userId, ...(categoryFilter && { categoryId: categoryFilter }) };
+  const transactionWhere = {
+    userId,
+    ...(categoryFilter && { categoryId: categoryFilter }),
+    ...(searchQuery && {
+      OR: [
+        { description: { contains: searchQuery, mode: "insensitive" as const } },
+        { merchantName: { contains: searchQuery, mode: "insensitive" as const } },
+      ],
+    }),
+  };
 
-  const [appUser, accounts, categories, csvTemplates, transactions, transactionCount, needsReview, pendingTransferMatches] =
+  const [appUser, accounts, categories, csvTemplates, transactions, transactionCount, needsReview, pendingTransferMatches, pendingReversalMatches] =
     await Promise.all([
       prisma.appUser.findUniqueOrThrow({ where: { id: userId } }),
       prisma.financialAccount.findMany({
@@ -126,6 +150,14 @@ export default async function TransactionsPage({
               account: { select: { name: true } },
             },
           },
+        },
+      }),
+      prisma.reversalMatchCandidate.findMany({
+        where: { userId, status: "pending" },
+        orderBy: { confidenceScore: "desc" },
+        include: {
+          chargeTransaction: { select: { id: true, date: true, amount: true, currency: true, description: true, account: { select: { name: true } } } },
+          reversalTransaction: { select: { id: true, date: true, amount: true, currency: true, description: true, account: { select: { name: true } } } },
         },
       }),
     ]);
@@ -219,6 +251,63 @@ export default async function TransactionsPage({
       },
     ];
   });
+
+  const reversalMatchRows: ReversalMatchRow[] = pendingReversalMatches.map((c) => ({
+    id: c.id,
+    confidenceScore: Number(c.confidenceScore),
+    charge: {
+      id: c.chargeTransaction.id,
+      date: c.chargeTransaction.date,
+      amount: Number(c.chargeTransaction.amount),
+      currency: c.chargeTransaction.currency,
+      description: c.chargeTransaction.description,
+      accountName: c.chargeTransaction.account.name,
+    },
+    reversal: {
+      id: c.reversalTransaction.id,
+      date: c.reversalTransaction.date,
+      amount: Number(c.reversalTransaction.amount),
+      currency: c.reversalTransaction.currency,
+      description: c.reversalTransaction.description,
+      accountName: c.reversalTransaction.account.name,
+    },
+  }));
+
+  // Confirmed reversal pairs touching the current page render as one
+  // collapsed economic event in the "All" list instead of two independent-
+  // looking rows -- a presentation layer only, the underlying Transaction
+  // rows are never modified. The reversal (credit) side of a confirmed pair
+  // is looked up here too so it can be fetched even if it fell on a
+  // different page than its charge (rare, since matched pairs are within
+  // 10 days of each other, but not impossible near a page boundary).
+  const pageTxIds = transactions.map((t) => t.id);
+  const confirmedReversals = pageTxIds.length
+    ? await prisma.reversalMatchCandidate.findMany({
+        where: {
+          userId,
+          status: "confirmed",
+          OR: [{ chargeTransactionId: { in: pageTxIds } }, { reversalTransactionId: { in: pageTxIds } }],
+        },
+      })
+    : [];
+  const pageTxIdSet = new Set(pageTxIds);
+  const missingPartnerIds = confirmedReversals.flatMap((c) => {
+    const missing: string[] = [];
+    if (!pageTxIdSet.has(c.chargeTransactionId)) missing.push(c.chargeTransactionId);
+    if (!pageTxIdSet.has(c.reversalTransactionId)) missing.push(c.reversalTransactionId);
+    return missing;
+  });
+  const partnerTransactions = missingPartnerIds.length
+    ? await prisma.transaction.findMany({ where: { id: { in: missingPartnerIds } }, select: TRANSACTION_SELECT })
+    : [];
+  const reversalSideById = new Map<string, ReversedPairSide>(
+    [...transactions, ...partnerTransactions].map((t) => [
+      t.id,
+      { id: t.id, date: t.date, amount: Number(t.amount), currency: t.currency, description: t.description, accountName: t.account.name },
+    ])
+  );
+  const reversalByChargeId = new Map(confirmedReversals.map((c) => [c.chargeTransactionId, c]));
+  const reversalAbsorbedIds = new Set(confirmedReversals.map((c) => c.reversalTransactionId));
 
   // Read-only, informational only -- cross-currency transfers are never
   // auto-matched (the app only has a "latest FX rate," not a historical
@@ -315,13 +404,27 @@ export default async function TransactionsPage({
 
   return (
     <div className="mx-auto max-w-4xl p-6 space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-semibold">Transactions</h1>
-        <div className="flex flex-wrap gap-2">
-          <ImportCsvDialog accounts={accounts} templates={csvTemplates} />
-          <NewTransactionDialog accounts={accounts} categories={categories} />
-        </div>
-      </div>
+      {headerMode === "root" ? (
+        <AppHeader mode="root" pageTitle="Activity" />
+      ) : (
+        <AppHeader
+          title="Transactions"
+          primaryAction={<NewTransactionDialog accounts={accounts} categories={categories} />}
+          overflow={
+            <>
+              <ImportCsvDialog accounts={accounts} templates={csvTemplates} />
+              <Button variant="ghost" asChild>
+                <Link href="/recurring">
+                  <Repeat className="size-4" />
+                  Recurring charges
+                </Link>
+              </Button>
+            </>
+          }
+        />
+      )}
+
+      <SearchInput initialQuery={searchQuery} />
 
       <Card>
         <CardHeader className="flex items-center justify-between space-y-0">
@@ -362,7 +465,7 @@ export default async function TransactionsPage({
           description="Add one manually or import a CSV."
         />
       ) : (
-        <Tabs defaultValue="all">
+        <Tabs defaultValue={initialTab}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <TabsList>
               <TabsTrigger value="all">All ({transactionCount})</TabsTrigger>
@@ -375,10 +478,10 @@ export default async function TransactionsPage({
                 )}
               </TabsTrigger>
               <TabsTrigger value="transfers">
-                Suggested transfers
-                {transferMatchRows.length > 0 && (
+                Transfers
+                {transferMatchRows.length + reversalMatchRows.length > 0 && (
                   <Badge variant="secondary" className="ml-1">
-                    {transferMatchRows.length}
+                    {transferMatchRows.length + reversalMatchRows.length}
                   </Badge>
                 )}
               </TabsTrigger>
@@ -387,7 +490,13 @@ export default async function TransactionsPage({
           </div>
 
           <TabsContent value="all" className="mt-3 space-y-3">
-            <TransactionList transactions={transactions} categories={categories} />
+            <TransactionList
+              transactions={transactions}
+              categories={categories}
+              reversalByChargeId={reversalByChargeId}
+              reversalAbsorbedIds={reversalAbsorbedIds}
+              reversalSideById={reversalSideById}
+            />
             {totalPages > 1 && <TransactionsPagination page={page} totalPages={totalPages} />}
           </TabsContent>
           <TabsContent value="review" className="mt-3">
@@ -397,8 +506,22 @@ export default async function TransactionsPage({
               <TransactionList transactions={needsReview} categories={categories} />
             )}
           </TabsContent>
-          <TabsContent value="transfers" className="mt-3">
-            <SuggestedTransfersTab rows={transferMatchRows} crossCurrencyRows={crossCurrencyRows} />
+          <TabsContent value="transfers" className="mt-3 space-y-6">
+            {transferMatchRows.length === 0 && crossCurrencyRows.length === 0 && reversalMatchRows.length === 0 ? (
+              <EmptyState
+                icon={ArrowRightLeft}
+                title="Nothing to review"
+                description="Suggested transfers between your own accounts and possible charge reversals will show up here."
+              />
+            ) : (
+              <>
+                <SuggestedReversalsSection rows={reversalMatchRows} suppressEmptyState />
+                {(transferMatchRows.length > 0 || crossCurrencyRows.length > 0) && reversalMatchRows.length > 0 && (
+                  <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Suggested transfers</h3>
+                )}
+                <SuggestedTransfersTab rows={transferMatchRows} crossCurrencyRows={crossCurrencyRows} suppressEmptyState />
+              </>
+            )}
           </TabsContent>
         </Tabs>
       )}
@@ -406,18 +529,43 @@ export default async function TransactionsPage({
   );
 }
 
+export default function TransactionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ category?: string; page?: string; range?: string; tab?: string; q?: string }>;
+}) {
+  return <TransactionsBody searchParams={searchParams} headerMode="sub" />;
+}
+
 function TransactionList({
   transactions,
   categories,
+  reversalByChargeId,
+  reversalAbsorbedIds,
+  reversalSideById,
 }: {
   transactions: TransactionRowData[];
   categories: { id: string; name: string }[];
+  /** Confirmed reversal pairs touching this list -- charge id -> candidate. Only meaningful for the "All" list. */
+  reversalByChargeId?: Map<string, { chargeTransactionId: string; reversalTransactionId: string }>;
+  /** Reversal (credit) transaction ids already absorbed into a combined row -- skip rendering them standalone. */
+  reversalAbsorbedIds?: Set<string>;
+  reversalSideById?: Map<string, ReversedPairSide>;
 }) {
   return (
-    <div className="divide-y rounded-lg border">
-      {transactions.map((t) => (
-        <TransactionRow key={t.id} transaction={t} categories={categories} />
-      ))}
+    <div className="divide-y divide-border">
+      {transactions.map((t) => {
+        if (reversalAbsorbedIds?.has(t.id)) return null; // rendered as part of its charge's combined row instead
+        const reversalCandidate = reversalByChargeId?.get(t.id);
+        if (reversalCandidate && reversalSideById) {
+          const charge = reversalSideById.get(reversalCandidate.chargeTransactionId);
+          const reversal = reversalSideById.get(reversalCandidate.reversalTransactionId);
+          if (charge && reversal) {
+            return <ReversedTransactionRow key={t.id} charge={charge} reversal={reversal} />;
+          }
+        }
+        return <TransactionRow key={t.id} transaction={t} categories={categories} />;
+      })}
     </div>
   );
 }
@@ -431,19 +579,9 @@ function TransactionRow({
 }) {
   const amount = Number(t.amount);
   return (
-    <div className="flex flex-col gap-2 px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">{t.description}</p>
-          <p className="text-sm text-muted-foreground">
-            {t.account.name} · {new Date(t.date).toLocaleDateString()}
-            {t.isTransfer && (
-              <Badge variant="outline" className="ml-2">
-                transfer
-              </Badge>
-            )}
-          </p>
-        </div>
+    <div className="flex flex-col gap-1 px-4 py-2.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="truncate font-medium">{t.description}</p>
         <p
           className={cn(
             "font-amount shrink-0 text-right font-semibold",
@@ -453,15 +591,25 @@ function TransactionRow({
           {formatMoney(amount, t.currency, { signDisplay: "always" })}
         </p>
       </div>
-      {!t.isTransfer && (
-        <CategoryPicker
-          transactionId={t.id}
-          categoryId={t.categoryId}
-          categories={categories}
-          categorySource={t.categorySource}
-          categoryConfidence={t.categoryConfidence == null ? null : Number(t.categoryConfidence)}
-        />
-      )}
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
+        {!t.isTransfer && (
+          <CategoryPicker
+            transactionId={t.id}
+            categoryId={t.categoryId}
+            categories={categories}
+            categorySource={t.categorySource}
+            categoryConfidence={t.categoryConfidence == null ? null : Number(t.categoryConfidence)}
+          />
+        )}
+        <span>
+          {t.isTransfer && (
+            <Badge variant="outline" className="mr-1.5">
+              transfer
+            </Badge>
+          )}
+          {new Date(t.date).toLocaleDateString()} · {t.account.name}
+        </span>
+      </div>
     </div>
   );
 }
