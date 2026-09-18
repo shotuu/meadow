@@ -55,7 +55,7 @@ export function AddSinkingFundDialog({
             <Input id="name" name="name" placeholder="e.g. Car insurance renewal" required />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="targetAmount">Target amount</Label>
               <Input id="targetAmount" name="targetAmount" type="number" step="0.01" min="0.01" required />
@@ -66,7 +66,7 @@ export function AddSinkingFundDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="deadlineDate">Deadline</Label>
               <Input id="deadlineDate" name="deadlineDate" type="date" required />

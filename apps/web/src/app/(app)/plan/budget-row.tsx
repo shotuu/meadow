@@ -92,7 +92,21 @@ export async function RecurringBudgetRow({
     );
   }
 
-  const { remaining, conversionIncomplete } = await computeRecurringBudgetProgress(userId, category, budget, now);
+  const { remaining, rolledOverAmount, conversionIncomplete } = await computeRecurringBudgetProgress(
+    userId,
+    category,
+    budget,
+    now
+  );
+
+  // rollover_envelope's "available" balance folds in carryover from prior
+  // periods, so it can legitimately exceed this period's own budget amount
+  // (e.g. "$400 available" against a "$200 monthly" budget) -- phrasing
+  // that as "remaining of $200" (monthly_reset's correct phrasing, where
+  // the two numbers really are directly comparable) reads as a math error.
+  // Break the two apart instead of forcing rollover into monthly_reset's
+  // sentence shape.
+  const isRollover = category.budgetType === "rollover_envelope";
 
   return (
     <Row
@@ -100,9 +114,26 @@ export async function RecurringBudgetRow({
       name={category.name}
       detail={
         <>
-          <span className={cn("font-amount", remaining < 0 ? "text-negative" : "text-foreground")}>
-            {formatMoney(remaining, budget.currency)} remaining of {formatMoney(Number(budget.amount), budget.currency)}
-          </span>
+          {isRollover ? (
+            <span className="flex flex-col items-end gap-0.5">
+              <span className={cn("font-amount", remaining < 0 ? "text-negative" : "text-foreground")}>
+                {formatMoney(remaining, budget.currency)} available
+              </span>
+              <span className="text-xs">
+                {formatMoney(Number(budget.amount), budget.currency)} monthly
+                {rolledOverAmount !== 0 &&
+                  ` · ${
+                    rolledOverAmount > 0
+                      ? `+${formatMoney(rolledOverAmount, budget.currency)} carried over`
+                      : `${formatMoney(Math.abs(rolledOverAmount), budget.currency)} shortfall carried over`
+                  }`}
+              </span>
+            </span>
+          ) : (
+            <span className={cn("font-amount", remaining < 0 ? "text-negative" : "text-foreground")}>
+              {formatMoney(remaining, budget.currency)} remaining of {formatMoney(Number(budget.amount), budget.currency)}
+            </span>
+          )}
           {conversionIncomplete && (
             <Tooltip>
               <TooltipTrigger aria-label="This total may be incomplete">

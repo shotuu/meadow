@@ -6,7 +6,6 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/format";
 import { Meta } from "@/components/typography";
-import { cn } from "@/lib/utils";
 
 const chartConfig = {
   value: { label: "Portfolio value", color: "var(--chart-1)" },
@@ -61,7 +60,6 @@ export function PortfolioSparkline({
   const first = visible[0];
   const last = visible[visible.length - 1];
   const change = first && last ? last.value - first.value : 0;
-  const changePct = first && first.value !== 0 ? (change / Math.abs(first.value)) * 100 : null;
 
   const chartPoints = visible.map((p) => ({
     label: p.asOfDate.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
@@ -71,16 +69,19 @@ export function PortfolioSparkline({
   return (
     <div className="space-y-2">
       {visible.length > 1 && (
-        <p
-          className={cn(
-            "font-amount text-sm",
-            change > 0 ? "text-positive" : change < 0 ? "text-negative" : "text-muted-foreground"
-          )}
-        >
+        // Deliberately no green/red coloring and no percentage here, unlike
+        // dashboard/net-worth-chart.tsx's otherwise-identical line -- a
+        // colored "+$X (+Y%)" directly under a portfolio value and above a
+        // chart reads as investment performance at a glance, even with the
+        // disclaimer below it, and this figure includes contributions/
+        // withdrawals so a percentage of it isn't a meaningful investment
+        // return. Kept neutral (no positive/negative styling) instead.
+        <p className="font-amount text-sm text-foreground">
           {change >= 0 ? "+" : ""}
-          {formatMoney(change, currency)}
-          {changePct !== null && ` (${change >= 0 ? "+" : ""}${changePct.toFixed(1)}%)`}{" "}
-          <span className="text-muted-foreground">{range === "all" ? "all time" : `over ${RANGE_LABEL[range]}`}</span>
+          {formatMoney(change, currency)}{" "}
+          <span className="text-muted-foreground">
+            {range === "all" ? "since tracking began" : `over ${RANGE_LABEL[range]}`}
+          </span>
         </p>
       )}
       <ChartContainer config={chartConfig} className="aspect-auto h-20 w-full">

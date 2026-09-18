@@ -5,8 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { categoryColorVar } from "@/lib/category-color";
 import { NewCategoryDialog } from "./new-category-dialog";
-import { BudgetTypeSelect } from "./budget-type-select";
-import { archiveCategory, unarchiveCategory } from "./actions";
+import { CategoryRow } from "./category-row";
+import { unarchiveCategory } from "./actions";
 import { AppHeader } from "@/components/app-header";
 import { SectionLabel } from "@/components/typography";
 
@@ -49,23 +49,7 @@ export default async function CategoriesPage() {
             <Card>
               <CardContent className="divide-y p-0">
                 {groups[kind].map((category) => (
-                  <div key={category.id} className="flex items-center justify-between px-4 py-3">
-                    <span className="flex items-center gap-2">
-                      <span
-                        className="size-2 shrink-0 rounded-full"
-                        style={{ background: categoryColorVar(category.id) }}
-                      />
-                      {category.name}
-                    </span>
-                    <div className="flex items-center gap-3">
-                      <BudgetTypeSelect categoryId={category.id} value={category.budgetType} />
-                      <form action={archiveCategory.bind(null, category.id)}>
-                        <Button type="submit" variant="ghost" size="sm">
-                          Archive
-                        </Button>
-                      </form>
-                    </div>
-                  </div>
+                  <CategoryRow key={category.id} category={category} />
                 ))}
               </CardContent>
             </Card>
@@ -79,15 +63,15 @@ export default async function CategoriesPage() {
           <Card>
             <CardContent className="divide-y p-0">
               {archivedCategories.map((category) => (
-                <div key={category.id} className="flex items-center justify-between px-4 py-3 text-muted-foreground">
-                  <span className="flex items-center gap-2">
+                <div key={category.id} className="flex items-center justify-between gap-3 px-4 py-3 text-muted-foreground">
+                  <span className="flex min-w-0 items-center gap-2">
                     <span
                       className="size-2 shrink-0 rounded-full opacity-50"
                       style={{ background: categoryColorVar(category.id) }}
                     />
-                    {category.name}
+                    <span className="truncate">{category.name}</span>
                   </span>
-                  <form action={unarchiveCategory.bind(null, category.id)}>
+                  <form action={unarchiveCategory.bind(null, category.id)} className="shrink-0">
                     <Button type="submit" variant="ghost" size="sm">
                       Unarchive
                     </Button>

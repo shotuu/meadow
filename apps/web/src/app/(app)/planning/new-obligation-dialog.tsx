@@ -56,7 +56,7 @@ export function NewObligationDialog({
             <Input id="name" name="name" placeholder="e.g. Car insurance" required />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="amount">Amount</Label>
               <Input id="amount" name="amount" type="number" step="0.01" min="0.01" required />
@@ -74,7 +74,7 @@ export function NewObligationDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="nextDueDate">Next due date</Label>
               <Input id="nextDueDate" name="nextDueDate" type="date" required />
@@ -98,7 +98,7 @@ export function NewObligationDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="priority">Priority</Label>
               <Select name="priority" defaultValue="planned">

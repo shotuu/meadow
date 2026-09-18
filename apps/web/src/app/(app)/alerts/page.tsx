@@ -138,15 +138,18 @@ export default async function AlertsPage() {
               {events.map((event) => {
                 const SeverityIcon = SEVERITY_ICON[event.severity] ?? Info;
                 return (
-                  <div key={event.id} className="flex items-start justify-between gap-4 px-4 py-3">
-                    <div className="space-y-1">
+                  <div
+                    key={event.id}
+                    className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
+                  >
+                    <div className="min-w-0 space-y-1">
                       <div className="flex items-center gap-2">
                         <SeverityIcon className="size-4 shrink-0 text-muted-foreground" />
                         <Badge variant={SEVERITY_VARIANT[event.severity] ?? "outline"}>
                           {SEVERITY_LABEL[event.severity] ?? event.severity}
                         </Badge>
-                        <p className="font-medium">{event.title}</p>
                       </div>
+                      <p className="font-medium leading-snug">{event.title}</p>
                       <p className="text-sm text-muted-foreground">{event.message}</p>
                       <Meta>{event.triggeredAt.toLocaleString()}</Meta>
                     </div>

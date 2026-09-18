@@ -244,6 +244,26 @@ async function evaluateSinkingFundUnderfunded(rule: AlertRule): Promise<void> {
 }
 
 /**
+ * Bug fix (correctness, not polish -- see PROGRESS.md's mobile-polish-pass
+ * entry): finds open target_allocation AlertEvents whose bucket entityId no
+ * longer has a matching current target. computePortfolioDrift only ever
+ * evaluates buckets that still have a TargetAllocation row (see its own
+ * doc comment), so a bucket whose row was deleted -- e.g. saveTargetAllocations'
+ * guided Stocks->Core/Satellite migration, which deletes the old
+ * instrument-type-label row via deleteBucketNames -- simply stops
+ * appearing in `drift` on the very next evaluation. Nothing was ever
+ * resolving its last-computed AlertEvent, so it stayed open forever: a
+ * real user report of a legacy "Stocks has drifted from target" alert
+ * surviving a successful migration to a real Core/Satellite target.
+ * Exported as a pure function so the reconciliation logic is unit-testable
+ * without a database.
+ */
+export function findStaleEntityIds(openEntityIds: string[], currentEntityIds: string[]): string[] {
+  const current = new Set(currentEntityIds);
+  return openEntityIds.filter((id) => !current.has(id));
+}
+
+/**
  * portfolio_drift has no rule-level config -- the actual per-bucket target
  * and drift threshold live on each TargetAllocation row, so this rule
  * simply diffs "current holdings" against "every configured target" for
@@ -255,7 +275,23 @@ async function evaluateSinkingFundUnderfunded(rule: AlertRule): Promise<void> {
  */
 async function evaluatePortfolioDrift(rule: AlertRule): Promise<void> {
   const targetRows = await prisma.targetAllocation.findMany({ where: { userId: rule.userId } });
-  if (targetRows.length === 0) return;
+  const openEvents = await prisma.alertEvent.findMany({
+    where: { alertRuleId: rule.id, relatedEntityType: "target_allocation", resolvedAt: null },
+    select: { relatedEntityId: true },
+  });
+  // createAlertIfNotOpen always sets relatedEntityId for this rule type --
+  // the schema-level nullability is for other AlertEvent kinds.
+  const openEntityIds = openEvents.flatMap((e) => (e.relatedEntityId ? [e.relatedEntityId] : []));
+
+  if (targetRows.length === 0) {
+    // No targets configured at all anymore (every bucket deleted) -- every
+    // previously open drift alert for this rule is stale the same way a
+    // single deleted bucket is below.
+    for (const staleId of findStaleEntityIds(openEntityIds, [])) {
+      await autoResolveOpen(rule.id, "target_allocation", staleId);
+    }
+    return;
+  }
 
   const [holdings, bucketAssignments, instrumentTypeOverrides] = await Promise.all([
     readCurrentHoldings(rule.userId),
@@ -283,6 +319,7 @@ async function evaluatePortfolioDrift(rule: AlertRule): Promise<void> {
     driftThresholdPct: Number(t.driftThresholdPct),
   }));
   const drift = computePortfolioDrift(current, targets);
+  const currentEntityIds = drift.map((d) => `${rule.userId}:${d.bucketName}`);
 
   for (const d of drift) {
     const entityId = `${rule.userId}:${d.bucketName}`;
@@ -299,5 +336,9 @@ async function evaluatePortfolioDrift(rule: AlertRule): Promise<void> {
     } else {
       await autoResolveOpen(rule.id, "target_allocation", entityId);
     }
+  }
+
+  for (const staleId of findStaleEntityIds(openEntityIds, currentEntityIds)) {
+    await autoResolveOpen(rule.id, "target_allocation", staleId);
   }
 }

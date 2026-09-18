@@ -1,19 +1,18 @@
 import Link from "next/link";
-import { Wallet, Receipt, Repeat, ArrowRightLeft } from "lucide-react";
+import { Wallet, Receipt, Repeat, ArrowRightLeft, Info } from "lucide-react";
 import { prisma } from "@finance-app/db";
 import { requireUserId } from "@/lib/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { LOW_CONFIDENCE_THRESHOLD } from "@finance-app/categorization-ai/constants";
 import { NewTransactionDialog } from "./new-transaction-dialog";
 import { ImportCsvDialog } from "./import-csv-dialog";
 import { CategoryPicker } from "./category-picker";
 import { CategoryFilter } from "./category-filter";
-import { CategoryPieChart } from "./category-pie-chart";
+import { SpendingBreakdownCard } from "./spending-breakdown-card";
 import { TransactionsPagination } from "./pagination";
-import { SpendRangeFilter } from "./spend-range-filter";
 import { SearchInput } from "./search-input";
 import { SuggestedTransfersTab, type TransferMatchRow } from "./suggested-transfers-tab";
 import { SuggestedReversalsSection, type ReversalMatchRow } from "./suggested-reversals-section";
@@ -22,7 +21,7 @@ import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
 import { AppHeader } from "@/components/app-header";
-import { SPEND_RANGE_LABEL, SPEND_RANGE_KINDS } from "@/lib/spend-range";
+import { SPEND_RANGE_KINDS } from "@/lib/spend-range";
 import {
   resolveSpendRange,
   convertCurrency,
@@ -36,6 +35,7 @@ import {
 const TRANSACTION_SELECT = {
   id: true,
   description: true,
+  merchantName: true,
   amount: true,
   currency: true,
   date: true,
@@ -50,6 +50,7 @@ const TRANSACTION_SELECT = {
 type TransactionRowData = {
   id: string;
   description: string;
+  merchantName: string | null;
   amount: unknown;
   currency: string;
   date: Date;
@@ -426,31 +427,12 @@ export async function TransactionsBody({
 
       <SearchInput initialQuery={searchQuery} />
 
-      <Card>
-        <CardHeader className="flex items-center justify-between space-y-0">
-          <CardTitle className="text-base">Spending by category ({appUser.defaultCurrency})</CardTitle>
-          <SpendRangeFilter selected={spendRange} />
-        </CardHeader>
-        <CardContent>
-          {spendBuckets.length === 0 ? (
-            <EmptyState
-              icon={Receipt}
-              title="No categorized spending in this period"
-              description={`Nothing expense-tagged fell in "${SPEND_RANGE_LABEL[spendRange]}" — try a wider range.`}
-            />
-          ) : (
-            <>
-              <CategoryPieChart data={spendBuckets} currency={appUser.defaultCurrency} />
-              {spendConversionIncomplete && (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Some transactions couldn&apos;t be converted (exchange rates not yet available for that
-                  currency) — this chart may be incomplete.
-                </p>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
+      <SpendingBreakdownCard
+        spendBuckets={spendBuckets}
+        currency={appUser.defaultCurrency}
+        spendRange={spendRange}
+        conversionIncomplete={spendConversionIncomplete}
+      />
 
       {accounts.length === 0 ? (
         <EmptyState
@@ -578,10 +560,27 @@ function TransactionRow({
   categories: { id: string; name: string }[];
 }) {
   const amount = Number(t.amount);
+  // Prefer the cleaned-up merchant name when one exists (a confident value
+  // set by rule/CSV/Plaid import, never invented here) -- raw bank
+  // descriptions like "Zelle Transfer Conf# 99CWNC4CJ; LINA PH..." are
+  // still the ground truth, so they're never dropped, just moved behind an
+  // info tooltip instead of always occupying the row's primary line.
+  const displayName = t.merchantName?.trim() || t.description;
+  const hasRawDescription = displayName !== t.description;
   return (
     <div className="flex flex-col gap-1 px-4 py-2.5">
       <div className="flex items-baseline justify-between gap-3">
-        <p className="truncate font-medium">{t.description}</p>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <p className="truncate font-medium">{displayName}</p>
+          {hasRawDescription && (
+            <Tooltip>
+              <TooltipTrigger aria-label="Bank description">
+                <Info className="size-3.5 shrink-0 text-muted-foreground" />
+              </TooltipTrigger>
+              <TooltipContent className="max-w-64">{t.description}</TooltipContent>
+            </Tooltip>
+          )}
+        </span>
         <p
           className={cn(
             "font-amount shrink-0 text-right font-semibold",

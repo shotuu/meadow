@@ -56,7 +56,7 @@ export function NewIncomeStreamDialog({
             <Input id="name" name="name" placeholder="e.g. Singapore salary" required />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="grossAmount">Gross amount</Label>
               <Input id="grossAmount" name="grossAmount" type="number" step="0.01" min="0.01" required />
@@ -67,7 +67,7 @@ export function NewIncomeStreamDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="currency">Currency</Label>
               <Input
@@ -98,7 +98,7 @@ export function NewIncomeStreamDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="nextExpectedDate">Next expected date</Label>
               <Input id="nextExpectedDate" name="nextExpectedDate" type="date" required />
@@ -109,7 +109,7 @@ export function NewIncomeStreamDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="confidence">Confidence</Label>
               <Select name="confidence" defaultValue="estimated">

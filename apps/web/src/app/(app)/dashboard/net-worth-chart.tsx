@@ -67,7 +67,9 @@ export function NetWorthChart({
           {change >= 0 ? "+" : ""}
           {formatMoney(change, currency)}
           {changePct !== null && ` (${change >= 0 ? "+" : ""}${changePct.toFixed(1)}%)`}{" "}
-          <span className="text-muted-foreground">{range === "all" ? "all time" : `over ${RANGE_LABEL[range]}`}</span>
+          <span className="text-muted-foreground">
+            {range === "all" ? "since tracking began" : `over ${RANGE_LABEL[range]}`}
+          </span>
         </p>
       )}
       <ChartContainer config={chartConfig} className="aspect-auto h-20 w-full">
