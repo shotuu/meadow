@@ -1,10 +1,12 @@
 import { computeRecurringBudgetProgress, readAccountBalances, readCurrentHoldings, readUsdRates, requireConversion } from "@finance-app/finance-data";
 import { prisma, type AlertRule } from "@finance-app/db";
 import {
+  activeStrategyBucketNames,
   classifyInstrumentType,
   computeCurrentAllocation,
   computePortfolioDrift,
   countPeriodsUntil,
+  partitionStrategyTargets,
   resolveStrategyBucketName,
   splitInvestedFromBrokerageCash,
   type InstrumentType,
@@ -318,7 +320,13 @@ async function evaluatePortfolioDrift(rule: AlertRule): Promise<void> {
     targetWeightPct: Number(t.targetWeightPct),
     driftThresholdPct: Number(t.driftThresholdPct),
   }));
-  const drift = computePortfolioDrift(current, targets);
+  // Legacy instrument-type-label targets (e.g. a leftover "Stocks" row from
+  // before strategy buckets existed) are excluded from drift entirely --
+  // the same canonical rule the Invest UI and the AI export apply, so this
+  // alert can never fire (or keep re-firing) against a target that isn't a
+  // real strategy bucket. See partitionStrategyTargets.
+  const { active: activeTargets } = partitionStrategyTargets(targets, activeStrategyBucketNames(classified));
+  const drift = computePortfolioDrift(current, activeTargets);
   const currentEntityIds = drift.map((d) => `${rule.userId}:${d.bucketName}`);
 
   for (const d of drift) {

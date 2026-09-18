@@ -12,6 +12,8 @@
  * the export.
  */
 
+import { stripAccountNumberSuffix } from "./redact";
+
 export const TRANSACTION_SELECT = {
   date: true,
   description: true,
@@ -120,4 +122,59 @@ export function buildCategoryPath(category: { name: string; parentCategory: { na
 /** "Chase — Checking", falling back to "Manual" when there's no institution. */
 export function buildAccountLabel(account: { name: string; institutionName?: string | null }): string {
   return `${account.institutionName ?? "Manual"} — ${account.name}`;
+}
+
+/** JSON-encoded tuple, not a delimited string -- avoids any ambiguity between e.g. institutionName "A" + name "B C" and institutionName "A B" + name "C". */
+function accountNameKey(account: { name: string; institutionName?: string | null }): string {
+  return JSON.stringify([account.institutionName ?? null, account.name]);
+}
+
+export interface AccountLabelResolver {
+  /** For data fetched with the account's real id (accounts, investment holdings). */
+  byId(accountId: string): string;
+  /** For data whose account relation was selected down to name/institutionName only (transactions, cash reserves) -- see TRANSACTION_SELECT/CASH_RESERVE_SELECT. */
+  byNameKey(account: { name: string; institutionName?: string | null }): string;
+}
+
+/**
+ * Builds every account's display label for one export in a single pass, so
+ * privacy_safe mode can deterministically disambiguate two accounts that
+ * become identical once their account-number suffix is stripped (e.g. two
+ * "Chase — Checking" accounts that were "Chase — Checking 3106" and "Chase
+ * — Checking 8842" before stripping) as "Chase — Checking 1" / "...2" --
+ * never the real last-four, per the privacy_safe account-label
+ * requirement. In standard mode, labels are just buildAccountLabel as
+ * before (no stripping, so collisions of this kind essentially don't
+ * happen since real account names already differ).
+ */
+export function buildAccountLabelResolver(
+  accounts: { id: string; name: string; institutionName: string | null }[],
+  privacySafe: boolean
+): AccountLabelResolver {
+  const rows = accounts.map((a) => ({
+    id: a.id,
+    key: accountNameKey(a),
+    label: buildAccountLabel({ name: privacySafe ? stripAccountNumberSuffix(a.name) : a.name, institutionName: a.institutionName }),
+  }));
+
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(r.label, (counts.get(r.label) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  const byId = new Map<string, string>();
+  const byKey = new Map<string, string>();
+  for (const r of rows) {
+    let finalLabel = r.label;
+    if (privacySafe && (counts.get(r.label) ?? 0) > 1) {
+      const n = (seen.get(r.label) ?? 0) + 1;
+      seen.set(r.label, n);
+      finalLabel = `${r.label} ${n}`;
+    }
+    byId.set(r.id, finalLabel);
+    byKey.set(r.key, finalLabel);
+  }
+
+  return {
+    byId: (accountId) => byId.get(accountId) ?? "Unknown account",
+    byNameKey: (account) => byKey.get(accountNameKey(account)) ?? buildAccountLabel(account),
+  };
 }

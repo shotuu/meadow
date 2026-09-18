@@ -352,4 +352,205 @@ integration("architecture regressions against PostgreSQL", () => {
     expect(fullTx?.notes).toBe("personal note");
   });
 
+  it("retires a legacy Stocks target when saving Core/Satellite via saveTargetAllocations, leaving an active total of 100%", async () => {
+    await db.financialAccount.update({ where: { id: accountId }, data: { syncSource: "ibkr_flex", type: "brokerage" } });
+    await db.investmentHolding.createMany({
+      data: [
+        { accountId, symbol: "AAPL", securityType: "STK", ibkrSubCategory: "COMMON", quantity: 10, marketValue: 900, currency: "USD", asOfDate: new Date() },
+        { accountId, symbol: "BND", securityType: "STK", ibkrSubCategory: "COMMON", quantity: 10, marketValue: 100, currency: "USD", asOfDate: new Date() },
+      ],
+    });
+    await db.holdingBucketAssignment.createMany({
+      data: [
+        { userId: state.userId, symbol: "AAPL", bucketName: "Core" },
+        { userId: state.userId, symbol: "BND", bucketName: "Satellite" },
+      ],
+    });
+    // The exact legacy shape reported: a target literally named after an
+    // instrument type, predating the Core/Satellite strategy-bucket system.
+    await db.targetAllocation.create({ data: { userId: state.userId, bucketName: "Stocks", targetWeightPct: 100, driftThresholdPct: 5 } });
+
+    const invest = await import("../../app/(app)/invest/actions");
+    await invest.saveTargetAllocations(
+      form({
+        rows: JSON.stringify([
+          { bucketName: "Core", targetWeightPct: 90, driftThresholdPct: 5 },
+          { bucketName: "Satellite", targetWeightPct: 10, driftThresholdPct: 5 },
+        ]),
+      })
+    );
+
+    const targets = await db.targetAllocation.findMany({ where: { userId: state.userId } });
+    expect(targets.map((t) => t.bucketName).sort()).toEqual(["Core", "Satellite"]);
+    expect(targets.reduce((sum, t) => sum + Number(t.targetWeightPct), 0)).toBe(100);
+  });
+
+  it("preserves a custom strategy bucket literally named after an instrument-type label when it's genuinely in use", async () => {
+    await db.financialAccount.update({ where: { id: accountId }, data: { syncSource: "ibkr_flex", type: "brokerage" } });
+    await db.investmentHolding.create({
+      data: { accountId, symbol: "TLT", securityType: "STK", ibkrSubCategory: "COMMON", quantity: 10, marketValue: 500, currency: "USD", asOfDate: new Date() },
+    });
+    // The user's own real strategy bucket is literally called "Bonds" --
+    // collides with an instrument-type label by name only, must survive.
+    await db.holdingBucketAssignment.create({ data: { userId: state.userId, symbol: "TLT", bucketName: "Bonds" } });
+    await db.targetAllocation.create({ data: { userId: state.userId, bucketName: "Bonds", targetWeightPct: 50, driftThresholdPct: 5 } });
+
+    const invest = await import("../../app/(app)/invest/actions");
+    await invest.saveTargetAllocations(form({ rows: JSON.stringify([{ bucketName: "Bonds", targetWeightPct: 60, driftThresholdPct: 5 }]) }));
+
+    const target = await db.targetAllocation.findUniqueOrThrow({ where: { userId_bucketName: { userId: state.userId, bucketName: "Bonds" } } });
+    expect(Number(target.targetWeightPct)).toBe(60);
+  });
+
+  it("excludes a legacy Stocks target from AI export targets/drift without hiding it, and lets a stale worker alert resolve", async () => {
+    await db.financialAccount.update({ where: { id: accountId }, data: { syncSource: "ibkr_flex", type: "brokerage" } });
+    await db.investmentHolding.create({
+      data: { accountId, symbol: "AAPL", securityType: "STK", ibkrSubCategory: "COMMON", quantity: 10, marketValue: 1000, currency: "USD", asOfDate: new Date() },
+    });
+    await db.holdingBucketAssignment.create({ data: { userId: state.userId, symbol: "AAPL", bucketName: "Core" } });
+    await db.targetAllocation.createMany({
+      data: [
+        { userId: state.userId, bucketName: "Stocks", targetWeightPct: 100, driftThresholdPct: 5 },
+        { userId: state.userId, bucketName: "Core", targetWeightPct: 90, driftThresholdPct: 5 },
+      ],
+    });
+
+    // Simulate the exact reported symptom: a "Stocks has drifted" alert
+    // already open from before this fix, which never used to resolve.
+    const rule = await db.alertRule.create({ data: { userId: state.userId, ruleType: "portfolio_drift", config: {}, isActive: true } });
+    await db.alertEvent.create({
+      data: {
+        alertRuleId: rule.id,
+        userId: state.userId,
+        severity: "warning",
+        title: "Stocks has drifted from target",
+        message: "stale",
+        relatedEntityType: "target_allocation",
+        relatedEntityId: `${state.userId}:Stocks`,
+      },
+    });
+
+    const { buildAiFinancialContextExport } = await import("../ai-export/build-export");
+    const result = await buildAiFinancialContextExport("standard");
+
+    expect(result.investments.strategyAllocation.targets.map((t) => t.bucketName)).toEqual(["Core"]);
+    expect(result.investments.strategyAllocation.targets.reduce((sum, t) => sum + t.targetWeightPct, 0)).toBe(90);
+    expect(result.investments.strategyAllocation.drift.some((d) => d.bucketName === "Stocks")).toBe(false);
+    expect(result.investments.strategyAllocation.legacyTargets.map((t) => t.bucketName)).toEqual(["Stocks"]);
+    expect(result.calculationWarnings.some((w) => w.includes("Stocks"))).toBe(true);
+    expect(result.financialPlan.portfolioTargets.map((t) => t.bucketName)).toEqual(["Core"]);
+    expect(result.dataCoverage.hasTargetAllocation).toBe(true);
+
+    await (await import("../../../../../apps/worker/src/jobs/alerts")).evaluateAlertRulesForAllUsers();
+    const stillOpenForStocks = await db.alertEvent.findFirst({
+      where: { userId: state.userId, relatedEntityType: "target_allocation", relatedEntityId: `${state.userId}:Stocks`, resolvedAt: null },
+    });
+    expect(stillOpenForStocks).toBeNull();
+  });
+
+  it("hardens privacy-safe redaction: P2P counterparties, the account holder's own name, and account-number suffixes, without erasing merchants", async () => {
+    await db.user.update({ where: { id: state.userId }, data: { name: "Jane Student" } });
+    const bofaOne = await db.financialAccount.create({
+      data: { userId: state.userId, name: "Adv SafeBalance Checking 3106", institutionName: "Bank of America", currency: "USD", type: "checking", classification: "asset", syncSource: "manual" },
+    });
+    const bofaTwo = await db.financialAccount.create({
+      data: { userId: state.userId, name: "Adv SafeBalance Checking 8842", institutionName: "Bank of America", currency: "USD", type: "checking", classification: "asset", syncSource: "manual" },
+    });
+    await db.transaction.createMany({
+      data: [
+        { userId: state.userId, accountId: bofaOne.id, amount: 500, currency: "USD", date: new Date(), description: "Zelle payment from JANE DOE Conf# 000482910334" },
+        { userId: state.userId, accountId: bofaOne.id, amount: -50, currency: "USD", date: new Date(), description: "UCLA PAYROLL DEP JANE STUDENT 000482910335", merchantName: "UCLA" },
+        { userId: state.userId, accountId: bofaTwo.id, amount: -9.99, currency: "USD", date: new Date(), description: "APPLE.COM/BILL", merchantName: "Apple" },
+        { userId: state.userId, accountId: bofaTwo.id, amount: -12, currency: "USD", date: new Date(), description: "SPOTIFY USA", merchantName: "Spotify" },
+      ],
+    });
+    await db.cashReserve.create({ data: { userId: state.userId, name: "Reserve", currency: "USD", targetAmount: 100, accountId: bofaOne.id } });
+
+    const { buildAiFinancialContextExport } = await import("../ai-export/build-export");
+    const safe = await buildAiFinancialContextExport("privacy_safe");
+    const full = await buildAiFinancialContextExport("standard");
+    const serializedSafe = JSON.stringify(safe);
+
+    // Removed: real last-four digits, the P2P counterparty's name, and the
+    // account holder's own name.
+    expect(serializedSafe).not.toContain("3106");
+    expect(serializedSafe).not.toContain("8842");
+    expect(serializedSafe).not.toContain("JANE DOE");
+    expect(serializedSafe).not.toContain("JANE STUDENT");
+    expect(serializedSafe).toContain("[person]");
+    expect(serializedSafe).toContain("[account holder]");
+
+    // Preserved: ordinary merchant identity.
+    expect(serializedSafe).toContain("Apple");
+    expect(serializedSafe).toContain("Spotify");
+    expect(serializedSafe).toContain("UCLA");
+
+    // Two accounts that collide once their suffix is stripped get
+    // deterministic, non-sensitive aliases -- never the real last-four.
+    const safeBofaLabels = safe.accounts.filter((a) => a.institutionName === "Bank of America").map((a) => a.label).sort();
+    expect(safeBofaLabels).toEqual(["Bank of America — Adv SafeBalance Checking 1", "Bank of America — Adv SafeBalance Checking 2"]);
+    const safeReserve = safe.cashReserves.find((r) => r.name === "Reserve");
+    expect(safeReserve?.scope).toMatch(/^account:Bank of America — Adv SafeBalance Checking [12]$/);
+
+    // Standard (non-privacy) mode is never weakened by any of this.
+    const fullBofaLabels = full.accounts.filter((a) => a.institutionName === "Bank of America").map((a) => a.label).sort();
+    expect(fullBofaLabels).toEqual(["Bank of America — Adv SafeBalance Checking 3106", "Bank of America — Adv SafeBalance Checking 8842"]);
+    expect(JSON.stringify(full)).toContain("JANE DOE");
+  });
+
+  it("keeps brokerage cash separate from strategy buckets and instrumentType separate from strategyBucket", async () => {
+    await db.financialAccount.update({ where: { id: accountId }, data: { syncSource: "ibkr_flex", type: "brokerage" } });
+    await db.investmentHolding.createMany({
+      data: [
+        { accountId, symbol: "AAPL", securityType: "STK", ibkrSubCategory: "COMMON", quantity: 10, marketValue: 800, currency: "USD", asOfDate: new Date() },
+        { accountId, symbol: "USD", securityType: "CASH", quantity: 200, marketValue: 200, currency: "USD", asOfDate: new Date() },
+      ],
+    });
+    await db.holdingBucketAssignment.create({ data: { userId: state.userId, symbol: "AAPL", bucketName: "Core" } });
+    await db.targetAllocation.create({ data: { userId: state.userId, bucketName: "Core", targetWeightPct: 100, driftThresholdPct: 5 } });
+
+    const { buildAiFinancialContextExport } = await import("../ai-export/build-export");
+    const result = await buildAiFinancialContextExport("standard");
+
+    // The cash holding never appears as a strategy-allocation bucket...
+    expect(result.investments.strategyAllocation.current.map((c) => c.bucketName)).toEqual(["Core"]);
+    expect(result.investments.strategyAllocation.current[0].currentWeightPct).toBe(100);
+    // ...it's reported separately instead, at its real value.
+    expect(result.investments.brokerageCashInDefaultCurrencyApprox).toBe(200);
+
+    // instrumentType (a fact about the security) and strategyBucket (the
+    // user's own policy choice) are independent fields on the same holding.
+    const cashHolding = result.investments.holdings.find((h) => h.symbol === "USD")!;
+    expect(cashHolding.instrumentType).toBe("cash");
+    expect(cashHolding.strategyBucket).toBe("Unclassified");
+    const aaplHolding = result.investments.holdings.find((h) => h.symbol === "AAPL")!;
+    expect(aaplHolding.instrumentType).toBe("stock");
+    expect(aaplHolding.strategyBucket).toBe("Core");
+  });
+
+  it("does not crash export generation when a holding's currency has no exchange rate, and reports the gap explicitly", async () => {
+    await db.financialAccount.update({ where: { id: accountId }, data: { syncSource: "ibkr_flex", type: "brokerage" } });
+    await db.investmentHolding.create({
+      data: { accountId, symbol: "OBSCURE", securityType: "STK", ibkrSubCategory: "COMMON", quantity: 5, marketValue: 500, currency: "XAU", asOfDate: new Date() },
+    });
+    await db.targetAllocation.create({ data: { userId: state.userId, bucketName: "Core", targetWeightPct: 100, driftThresholdPct: 5 } });
+
+    const { buildAiFinancialContextExport } = await import("../ai-export/build-export");
+    await expect(buildAiFinancialContextExport("standard")).resolves.not.toThrow();
+    const result = await buildAiFinancialContextExport("standard");
+    expect(result.calculationWarnings.some((w) => w.toLowerCase().includes("couldn't be converted"))).toBe(true);
+  });
+
+  it("never generates recommendation/advice prose -- only facts and limitations", async () => {
+    await db.targetAllocation.create({ data: { userId: state.userId, bucketName: "Stocks", targetWeightPct: 100, driftThresholdPct: 5 } });
+    await db.cashReserve.create({ data: { userId: state.userId, name: "Reserve", currency: "USD", targetAmount: 100 } });
+
+    const { buildAiFinancialContextExport } = await import("../ai-export/build-export");
+    const result = await buildAiFinancialContextExport("standard");
+
+    const prose = [...result.calculationWarnings, result.financialPlan.note, result.meta.exportNote, ...result.meta.knownDataGaps].join(" \n ");
+    const adviceLike = /\b(should|recommend|consider (?!it)|you ought|advise|suggest investing|better to)\b/i;
+    expect(prose).not.toMatch(adviceLike);
+  });
+
 });

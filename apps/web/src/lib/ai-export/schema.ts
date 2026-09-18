@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export type ExportMode = "standard" | "privacy_safe";
 
@@ -40,6 +40,32 @@ export type ExportMode = "standard" | "privacy_safe";
  * shown separately, never silently dropped). instrumentType allocation
  * (investments.allocation, the security-type dimension) is unaffected --
  * cash still appears there as its own bucket, that's a different axis.
+ *
+ * v5: strategyAllocation.targets/drift and financialPlan.portfolioTargets
+ * now exclude legacy instrument-type-label TargetAllocation rows (e.g. a
+ * leftover "Stocks: 100%" target from before strategy buckets and
+ * instrument types were separate concepts) -- previously these were
+ * included alongside real strategy-bucket targets, so a user who'd since
+ * set up Core/Satellite would see targets summing to 200% and a meaningless
+ * ~100%-drift entry for "Stocks". Uses the same canonical
+ * partitionStrategyTargets the Invest UI and the worker's portfolio_drift
+ * alert now also apply, so all three can never disagree about which
+ * targets are active. Never hidden, though: adds
+ * investments.strategyAllocation.legacyTargets (always present, empty when
+ * there are none) so a leftover config row remains visible as real
+ * information, just excluded from the numbers that are supposed to sum to
+ * 100% and drive drift math. dataCoverage.hasTargetAllocation now reflects
+ * active targets only, matching this same distinction.
+ *
+ * v5 also hardens privacy_safe redaction (P2P-transfer counterparty names,
+ * the account holder's own name, and account-number suffixes in account
+ * labels are now redacted -- see redact.ts -- not just reference numbers),
+ * and adds transactions.recent[].matchedIncomeStreamName so a "high"
+ * incomeTypeConfidence is traceable to the specific user-configured
+ * IncomeStream that earned it, rather than left as an opaque confidence
+ * level (income classification/authority itself is unchanged -- an
+ * explicit IncomeStream name match already outranked every keyword
+ * heuristic before this version, this only makes that fact visible).
  */
 export interface AiFinancialContextExport {
   schemaVersion: typeof SCHEMA_VERSION;
@@ -81,8 +107,12 @@ export interface AiFinancialContextExport {
     /** Strategy-bucket-based grouping (user-defined, e.g. "core"/"satellite") -- answers "how far from my target?" and "how concentrated?" Ordinary brokerage cash is excluded from this denominator by default; see brokerageCashInDefaultCurrencyApprox below. */
     strategyAllocation: {
       current: { bucketName: string; marketValueInDefaultCurrencyApprox: number; currentWeightPct: number }[];
+      /** Active strategy-bucket targets only -- always sums to what the user actually configured, never inflated by a leftover legacy row. See legacyTargets below for those. */
       targets: { bucketName: string; targetWeightPct: number; driftThresholdPct: number }[];
+      /** Computed against `targets` (active only) -- a legacy target never produces a drift entry. */
       drift: { bucketName: string; currentWeightPct: number; targetWeightPct: number; driftPct: number; isDrifted: boolean }[];
+      /** TargetAllocation rows that look like a leftover instrument-type label (e.g. "Stocks") rather than a real strategy bucket -- excluded from targets/drift above, but reported here rather than silently dropped. Empty when there are none. */
+      legacyTargets: { bucketName: string; targetWeightPct: number; driftThresholdPct: number }[];
     };
     /** Sum of every holding with instrumentType "cash" -- objectively identified settlement/residual brokerage cash, excluded from strategyAllocation's denominator, never silently dropped or folded into an "Unclassified" bucket. */
     brokerageCashInDefaultCurrencyApprox: number;
@@ -168,6 +198,8 @@ export interface ExportTransaction {
   /** Best-effort semantic classification for positive (incoming) amounts only -- always confidence-qualified, never asserted as fact. */
   incomeType: IncomeType | null;
   incomeTypeConfidence: ConfidenceLevel | null;
+  /** The user's own explicitly-configured IncomeStream (see incomeStreams below) whose name matched this transaction, if any -- the authoritative source behind a "high" incomeTypeConfidence. Null whenever the classification instead came from a weaker keyword/recurring-series heuristic, even at medium/low confidence. */
+  matchedIncomeStreamName: string | null;
   /** A same-account, opposite-sign, short-window match found by the same pairing algorithm the app uses for transfer detection -- read-only, never persisted, never invented when no match is found. */
   isReversal: boolean;
   isRefund: boolean;

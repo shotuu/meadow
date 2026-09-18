@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma, InstrumentType } from "@finance-app/db";
+import { readCurrentHoldings } from "@finance-app/finance-data";
+import { activeStrategyBucketNames, classifyInstrumentType, partitionStrategyTargets, resolveStrategyBucketName } from "@finance-app/finance-logic";
 import { requireUserId } from "@/lib/session";
 
 function revalidateInvest(symbol?: string) {
@@ -81,26 +83,34 @@ interface TargetRowInput {
 /**
  * Replaces the signed-in user's entire TargetAllocation set in one atomic
  * transaction -- used both for first-time target setup and for the guided
- * legacy-target migration (Phase 5): `deleteBucketNames` names any stale
- * instrument-type-label row(s) being retired (see
- * isLegacyInstrumentLabelTarget) so the replacement never leaves a dangling
- * target that would otherwise show a permanent, meaningless 100%-drift
- * alert. Idempotent -- re-submitting the same rows just re-upserts them,
- * and deleting an already-gone bucket name is a harmless no-op, so a
- * doubled network request or a retried failed submit can't corrupt state.
- * Historical data isn't affected: TargetAllocation has never been versioned
- * (unlike Budget), it's current-config-only, so replacing a stale row here
- * doesn't destroy anything worth keeping -- the export/alerts/UI only ever
- * read the live row.
+ * legacy-target migration (Phase 5). Idempotent -- re-submitting the same
+ * rows just re-upserts them, and deleting an already-gone bucket name is a
+ * harmless no-op, so a doubled network request or a retried failed submit
+ * can't corrupt state. Historical data isn't affected: TargetAllocation has
+ * never been versioned (unlike Budget), it's current-config-only, so
+ * replacing a stale row here doesn't destroy anything worth keeping -- the
+ * export/alerts/UI only ever read the live row.
+ *
+ * Which existing rows count as "stale instrument-type-label leftovers" to
+ * retire is computed HERE, server-side, from the user's real current
+ * holdings/bucket-assignments (via the shared partitionStrategyTargets) --
+ * not trusted from a client-submitted list of bucket names. This used to
+ * accept a `deleteBucketNames` field the dialog computed client-side and
+ * passed straight into a `deleteMany`; that meant the one place actually
+ * retiring legacy targets had no way to independently verify what it was
+ * deleting, and any client/server data drift (e.g. a save happening against
+ * data staler than what's now in the database) could leave a target like
+ * "Stocks" undeleted indefinitely -- a real instance of which prompted this
+ * fix. Recomputing from truth at commit time closes that gap without a
+ * second migration mechanism: this is still the one save action, just no
+ * longer trusting the client for a fact only the server can verify.
  */
 export async function saveTargetAllocations(formData: FormData) {
   const userId = await requireUserId();
 
   let rows: TargetRowInput[];
-  let deleteBucketNames: string[];
   try {
     rows = JSON.parse(String(formData.get("rows") || "[]"));
-    deleteBucketNames = JSON.parse(String(formData.get("deleteBucketNames") || "[]"));
   } catch {
     throw new Error("Malformed target allocation payload");
   }
@@ -127,9 +137,38 @@ export async function saveTargetAllocations(formData: FormData) {
   if (totalPct > 100.001) throw new Error("Target weights add up to more than 100%");
 
   await prisma.$transaction(async (tx) => {
-    if (deleteBucketNames.length > 0) {
-      await tx.targetAllocation.deleteMany({ where: { userId, bucketName: { in: deleteBucketNames } } });
+    const [holdingRows, bucketAssignments, instrumentTypeOverrides, existingTargets] = await Promise.all([
+      readCurrentHoldings(userId, undefined, tx),
+      tx.holdingBucketAssignment.findMany({ where: { userId } }),
+      tx.instrumentTypeOverride.findMany({ where: { userId } }),
+      tx.targetAllocation.findMany({ where: { userId }, select: { bucketName: true } }),
+    ]);
+    const overridesBySymbol = new Map(bucketAssignments.map((a) => [a.symbol, a.bucketName]));
+    const instrumentOverridesBySymbol = new Map(instrumentTypeOverrides.map((o) => [o.symbol, o.instrumentType as InstrumentType]));
+    const activeHoldings = holdingRows
+      .filter((h) => Number(h.quantity) !== 0)
+      .map((h) => ({
+        bucketName: resolveStrategyBucketName(h.symbol, overridesBySymbol),
+        instrumentType: classifyInstrumentType({
+          ibkrAssetCategory: h.securityType,
+          ibkrSubCategory: h.ibkrSubCategory,
+          manualOverride: instrumentOverridesBySymbol.get(h.symbol) ?? null,
+        }).instrumentType,
+      }));
+    const currentBucketNames = activeStrategyBucketNames(activeHoldings);
+
+    // Never retire a bucket name that's part of THIS save -- if the user is
+    // actively (re)setting a target literally named e.g. "Bonds", that's an
+    // explicit, current instruction, not something to second-guess.
+    const savedBucketNames = new Set(cleanRows.map((r) => r.bucketName));
+    const { legacy } = partitionStrategyTargets(
+      existingTargets.filter((t) => !savedBucketNames.has(t.bucketName)),
+      currentBucketNames
+    );
+    if (legacy.length > 0) {
+      await tx.targetAllocation.deleteMany({ where: { userId, bucketName: { in: legacy.map((t) => t.bucketName) } } });
     }
+
     for (const row of cleanRows) {
       await tx.targetAllocation.upsert({
         where: { userId_bucketName: { userId, bucketName: row.bucketName } },

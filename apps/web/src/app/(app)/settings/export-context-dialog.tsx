@@ -24,7 +24,7 @@ import { generateAiFinancialContextExport } from "./export-actions";
 import type { ExportMode } from "@/lib/ai-export/schema";
 
 const MODE_DESCRIPTIONS: Record<ExportMode, string> = {
-  privacy_safe: "Omits transaction notes and best-effort redacts long reference/confirmation numbers from descriptions. Recommended default for sharing with an AI.",
+  privacy_safe: "Omits transaction notes, and best-effort redacts P2P counterparty names, your own name, account-number suffixes, and long reference/confirmation numbers. Recommended default for sharing with an AI.",
   standard: "Includes transaction notes and descriptions exactly as recorded, with no redaction pass. Useful for your own records, not recommended for sharing externally.",
 };
 

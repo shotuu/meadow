@@ -1,4 +1,4 @@
-import type { InstrumentType } from "./instrument-classification";
+import { isLegacyInstrumentLabelTarget, type InstrumentType } from "./instrument-classification";
 
 export interface BucketHolding {
   bucketName: string;
@@ -126,6 +126,50 @@ export function computePortfolioDrift(
  */
 export function resolveStrategyBucketName(symbol: string, overridesBySymbol: Map<string, string>): string {
   return overridesBySymbol.get(symbol) ?? "Unclassified";
+}
+
+/**
+ * The set of strategy-bucket names actually in use right now: at least one
+ * currently-held (nonzero-quantity) holding assigned to that bucket,
+ * excluding ordinary brokerage cash -- the same "invested" definition
+ * splitInvestedFromBrokerageCash uses elsewhere. Needs only bucketName +
+ * instrumentType, not market value or currency, since bucket *presence* is
+ * all isLegacyInstrumentLabelTarget needs -- unlike computeCurrentAllocation
+ * (which needs value to compute *weight*), this never requires an FX
+ * conversion, so it can run in a context (e.g. saveTargetAllocations, before
+ * any rates are loaded) that has no reason to touch currency conversion at
+ * all.
+ */
+export function activeStrategyBucketNames(holdings: { bucketName: string; instrumentType: InstrumentType }[]): Set<string> {
+  return new Set(holdings.filter((h) => h.instrumentType !== "cash").map((h) => h.bucketName));
+}
+
+export interface StrategyTargetPartition<T extends { bucketName: string }> {
+  /** Real, current strategy-bucket targets -- the only ones any drift/allocation calculation should ever use. */
+  active: T[];
+  /** Targets whose bucketName looks like a leftover instrument-type label (see isLegacyInstrumentLabelTarget) -- never silently dropped, always reported to the caller so it can be surfaced rather than hidden. */
+  legacy: T[];
+}
+
+/**
+ * Splits a user's TargetAllocation rows into active vs. legacy exactly
+ * once, so "which targets count for drift/allocation" can never drift
+ * apart between the callers that need to agree on it: the Invest UI, the
+ * worker's portfolio_drift alert, the AI export, and saveTargetAllocations'
+ * own persistence-layer cleanup. Never special-cases a specific bucket name
+ * (e.g. "Stocks") -- purely a function of isLegacyInstrumentLabelTarget.
+ */
+export function partitionStrategyTargets<T extends { bucketName: string }>(
+  targets: T[],
+  currentBucketNames: ReadonlySet<string>
+): StrategyTargetPartition<T> {
+  const active: T[] = [];
+  const legacy: T[] = [];
+  for (const t of targets) {
+    if (isLegacyInstrumentLabelTarget(t.bucketName, currentBucketNames)) legacy.push(t);
+    else active.push(t);
+  }
+  return { active, legacy };
 }
 
 /** Selects the latest complete report for each account, excluding exited symbols. */

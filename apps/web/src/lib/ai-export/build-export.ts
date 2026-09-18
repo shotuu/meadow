@@ -22,7 +22,8 @@ import {
   normalizeMerchantKey,
   classifyInstrumentType,
   instrumentTypeLabel,
-  isLegacyInstrumentLabelTarget,
+  activeStrategyBucketNames,
+  partitionStrategyTargets,
   splitInvestedFromBrokerageCash,
   CASH_ACCOUNT_TYPES,
   type InstrumentType,
@@ -49,7 +50,7 @@ import {
 } from "./schema";
 import { toDecimalString, roundMoney, roundPct } from "./decimal";
 import { classifyIncome, isLikelyRefundText } from "./income-classify";
-import { redactReferenceNumbers } from "./redact";
+import { redactPrivacySafeText } from "./redact";
 import {
   TRANSACTION_SELECT,
   CATEGORY_SELECT,
@@ -62,7 +63,7 @@ import {
   INCOME_STREAM_SELECT,
   CASH_RESERVE_SELECT,
   buildCategoryPath,
-  buildAccountLabel,
+  buildAccountLabelResolver,
 } from "./allowlist";
 
 const RECENT_WINDOW_MONTHS = 12;
@@ -82,11 +83,18 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
   const warnings: string[] = [];
 
   return prisma.$transaction(async (tx) => {
-    const appUser = await tx.appUser.findUniqueOrThrow({ where: { id: userId } });
+    const [appUser, authUser] = await Promise.all([
+      tx.appUser.findUniqueOrThrow({ where: { id: userId } }),
+      tx.user.findUnique({ where: { id: userId }, select: { name: true } }),
+    ]);
     const defaultCurrency = appUser.defaultCurrency;
+    // Only ever used to redact the account holder's own name out of a
+    // transaction description in privacy_safe mode (see redact.ts) --
+    // never included in the export output itself.
+    const accountHolderName = mode === "privacy_safe" ? (authUser?.name ?? null) : null;
 
     const accounts = await tx.financialAccount.findMany({ where: { userId, isArchived: false } });
-    const accountLabelById = new Map(accounts.map((a) => [a.id, buildAccountLabel(a)]));
+    const accountLabels = buildAccountLabelResolver(accounts, mode === "privacy_safe");
 
     const [computedBalances, currentRates] = await Promise.all([
       readAccountBalances(userId, accounts, tx),
@@ -105,9 +113,9 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
         account.syncSource === "finverse" && (account.type === "credit_card" || account.type === "loan")
           ? "This account's institution-reported balance sign has not been verified against a real debit/credit for Finverse-synced credit/loan accounts -- it may be inverted."
           : null;
-      if (caveat) warnings.push(`${buildAccountLabel(account)}: ${caveat}`);
+      if (caveat) warnings.push(`${accountLabels.byId(account.id)}: ${caveat}`);
       return {
-        label: buildAccountLabel(account),
+        label: accountLabels.byId(account.id),
         institutionName: account.institutionName,
         type: account.type,
         classification: account.classification,
@@ -177,7 +185,7 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
       if (b) reversalByTxId.set(match.bId, { partnerDate: a!.date, confidence: match.confidenceScore });
     }
 
-    const redact = (text: string) => (mode === "privacy_safe" ? redactReferenceNumbers(text) : text);
+    const redact = (text: string) => (mode === "privacy_safe" ? redactPrivacySafeText(text, accountHolderName) : text);
 
     const recentTransactions: ExportTransaction[] = recentTransactionRows.map((t) => {
       const amount = Number(t.amount);
@@ -198,13 +206,14 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
         merchantName: t.merchantName,
         amount: toDecimalString(t.amount)!,
         currency: t.currency,
-        accountLabel: buildAccountLabel(t.account),
+        accountLabel: accountLabels.byNameKey(t.account),
         categoryPath: buildCategoryPath(t.category),
         isTransfer: t.isTransfer,
         pending: t.pending,
         notes: mode === "privacy_safe" ? null : t.notes,
         incomeType: income.incomeType,
         incomeTypeConfidence: income.confidence,
+        matchedIncomeStreamName: income.matchedIncomeStreamName,
         isReversal: reversal !== undefined && !isRefund,
         isRefund,
         linkedTransactionDate: reversal ? reversal.partnerDate.toISOString().slice(0, 10) : null,
@@ -306,7 +315,7 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
     const holdings: ExportHolding[] = activeHoldings.map((h) => {
       const classification = classifyHolding(h);
       return {
-        accountLabel: accountLabelById.get(h.accountId) ?? "Unknown account",
+        accountLabel: accountLabels.byId(h.accountId),
         symbol: h.symbol,
         instrumentType: classification.instrumentType,
         instrumentTypeSource: classification.source,
@@ -357,24 +366,30 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
     }
     const { invested: bucketedByStrategy, brokerageCash } = splitInvestedFromBrokerageCash(strategyClassified);
     const currentStrategyAllocation = computeCurrentAllocation(bucketedByStrategy);
-    const strategyTargets = targetRows.map((t) => ({ bucketName: t.bucketName, targetWeightPct: Number(t.targetWeightPct), driftThresholdPct: Number(t.driftThresholdPct) }));
-    const strategyDrift = computePortfolioDrift(currentStrategyAllocation, strategyTargets);
+    const strategyTargetsRaw = targetRows.map((t) => ({ bucketName: t.bucketName, targetWeightPct: Number(t.targetWeightPct), driftThresholdPct: Number(t.driftThresholdPct) }));
 
     // A target bucket named after a known instrument-type label with no
     // matching current strategy bucket almost always means a leftover
     // target from before instrument type and strategy bucket were split
-    // into separate concepts -- flag it by name rather than silently
-    // producing a confusing 100%-drift number with no explanation. Shared
-    // heuristic with Home's stale-target banner and Invest's guided
-    // migration flow (isLegacyInstrumentLabelTarget) so all three can never
-    // disagree about which target is stale.
-    const currentStrategyBucketNames = new Set(currentStrategyAllocation.map((a) => a.bucketName));
-    for (const target of strategyTargets) {
-      if (isLegacyInstrumentLabelTarget(target.bucketName, currentStrategyBucketNames)) {
-        warnings.push(
-          `Strategy target "${target.bucketName}" looks like a leftover instrument-type label from before strategy buckets and instrument types were separate concepts -- no current holding is assigned to a strategy bucket with that name, so its drift is likely meaningless. Consider replacing it via the guided migration prompt on the Invest page.`
-        );
-      }
+    // into separate concepts (e.g. a literal "Stocks: 100%" row). Never
+    // included in drift/allocation math -- the same canonical rule the
+    // Invest UI and the worker's portfolio_drift alert apply
+    // (partitionStrategyTargets, built on isLegacyInstrumentLabelTarget), so
+    // this export can never show a different "active" target set than what
+    // the user sees on screen or what the worker alerts on. Not hidden,
+    // either: reported below as investments.strategyAllocation.legacyTargets
+    // and in calculationWarnings, since a leftover config row is real
+    // information the user may want to clean up, not something to silently
+    // drop.
+    const { active: strategyTargets, legacy: legacyStrategyTargets } = partitionStrategyTargets(
+      strategyTargetsRaw,
+      activeStrategyBucketNames(strategyClassified)
+    );
+    const strategyDrift = computePortfolioDrift(currentStrategyAllocation, strategyTargets);
+    for (const target of legacyStrategyTargets) {
+      warnings.push(
+        `Strategy target "${target.bucketName}" looks like a leftover instrument-type label from before strategy buckets and instrument types were separate concepts -- no current holding is assigned to a strategy bucket with that name, so it's excluded from strategyAllocation.targets/drift below (see legacyTargets) rather than treated as active. A guided migration flow to replace it exists on the Invest page.`
+      );
     }
 
     const portfolioHistoryAll = await readPortfolioHistory(userId, defaultCurrency, undefined, undefined, tx);
@@ -415,12 +430,20 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
       currency: r.currency,
       targetAmount: toDecimalString(r.targetAmount)!,
       minimumAmount: toDecimalString(r.minimumAmount),
-      scope: r.account ? `account:${buildAccountLabel(r.account)}` : `currency:${r.currency}`,
+      scope: r.account ? `account:${accountLabels.byNameKey(r.account)}` : `currency:${r.currency}`,
     }));
 
     const cashPolicy = computeCashPolicy(accounts, computedBalances, cashReserveRows, obligationRows, now, warnings);
 
-    const strategyTargetsOutput = targetRows.map((t) => ({ bucketName: t.bucketName, targetWeightPct: toDecimalString(t.targetWeightPct)!, driftThresholdPct: toDecimalString(t.driftThresholdPct)! }));
+    // Exact-decimal rows for financialPlan (unlike the rounded-for-display
+    // copy in investments.strategyAllocation below) -- filtered to the same
+    // active bucket names partitionStrategyTargets already decided, so "the
+    // plan" the user should be measured against never includes a legacy
+    // instrument-type-label leftover like "Stocks: 100%".
+    const activeTargetBucketNames = new Set(strategyTargets.map((t) => t.bucketName));
+    const strategyTargetsOutput = targetRows
+      .filter((t) => activeTargetBucketNames.has(t.bucketName))
+      .map((t) => ({ bucketName: t.bucketName, targetWeightPct: toDecimalString(t.targetWeightPct)!, driftThresholdPct: toDecimalString(t.driftThresholdPct)! }));
     const financialPlan: AiFinancialContextExport["financialPlan"] = {
       cashReserves,
       portfolioTargets: strategyTargetsOutput,
@@ -458,6 +481,7 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
           current: currentStrategyAllocation.map((a) => ({ bucketName: a.bucketName, marketValueInDefaultCurrencyApprox: roundMoney(a.marketValue), currentWeightPct: roundPct(a.currentWeightPct) })),
           targets: strategyTargets.map((t) => ({ bucketName: t.bucketName, targetWeightPct: roundPct(t.targetWeightPct), driftThresholdPct: roundPct(t.driftThresholdPct) })),
           drift: strategyDrift.map((d) => ({ ...d, currentWeightPct: roundPct(d.currentWeightPct), targetWeightPct: roundPct(d.targetWeightPct), driftPct: roundPct(d.driftPct) })),
+          legacyTargets: legacyStrategyTargets.map((t) => ({ bucketName: t.bucketName, targetWeightPct: roundPct(t.targetWeightPct), driftThresholdPct: roundPct(t.driftThresholdPct) })),
         },
         brokerageCashInDefaultCurrencyApprox: roundMoney(brokerageCash),
         portfolioHistoryRecent,
@@ -471,7 +495,7 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
       dataCoverage: {
         hasCashReserves: cashReserveRows.length > 0,
         hasObligations: obligationRows.length > 0,
-        hasTargetAllocation: targetRows.length > 0,
+        hasTargetAllocation: strategyTargets.length > 0,
         hasSinkingFunds: sinkingFundRows.length > 0,
         hasPrepaidCoverage: prepaidCoverageRows.length > 0,
         netWorthHistoryDays: netWorthHistory.length,
@@ -481,7 +505,7 @@ export async function buildAiFinancialContextExport(mode: ExportMode): Promise<A
         exportNote:
           "Generated by Meadow at the user's request for sharing with an external AI assistant. Balances and holdings are as of the dates shown, not real-time. Fields suffixed 'Approx' or 'InDefaultCurrency' are FX-converted and rounded for readability; every other monetary field is an exact ledger value in its native currency. incomeType/isReversal/isRefund are best-effort inferences, always paired with a confidence level -- never treat them as confirmed facts." +
           (mode === "privacy_safe"
-            ? " Privacy-safe mode: transaction notes are omitted and long digit-containing reference numbers in descriptions are replaced with '[redacted]' on a best-effort basis -- this is not a guarantee every identifier was caught."
+            ? " Privacy-safe mode: transaction notes are omitted entirely (free-form text can't be reliably scrubbed); P2P-transfer counterparty names (Zelle/Venmo/Cash App/PayPal) are replaced with '[person]'; the account holder's own name is replaced with '[account holder]' where it appears in a description; account labels never include an account-number suffix (two accounts that become identical after that are numbered, e.g. 'Checking 1'/'Checking 2', never by real last-four); and long digit-containing reference numbers are replaced with '[redacted]'. All of this is best-effort, not a guarantee -- ordinary merchant names (e.g. 'Apple', 'Spotify') are deliberately left alone."
             : ""),
         knownDataGaps: [
           earliestSnapshotDate
@@ -594,7 +618,7 @@ function computeCashPolicy(
       uncommittedCashByCurrency[currency] = null;
       investableCashByCurrency[currency] = null;
       notes[currency] =
-        `No cash reserves or obligations recorded for ${currency} -- investable cash cannot be determined. Treat all ${currency} cash as reserved/unavailable until obligations or reserves are entered.`;
+        `No cash reserves or obligations recorded for ${currency} -- investable cash cannot be determined from available data, so it's reported as null rather than assuming any amount is free to invest.`;
       calculationComplete = false;
       incompleteCurrencies.push(currency);
     } else {

@@ -79,7 +79,9 @@ export function SetStrategyTargetsDialog({
           action={async (formData) => {
             setError(null);
             formData.set("rows", JSON.stringify(rows.filter((r) => r.bucketName.trim())));
-            formData.set("deleteBucketNames", JSON.stringify(staleTargets.map((s) => s.bucketName)));
+            // Which existing rows to retire as stale is now recomputed
+            // server-side from real data (see saveTargetAllocations) --
+            // staleTargets here is only used for this dialog's own display.
             try {
               await saveTargetAllocations(formData);
               setOpen(false);

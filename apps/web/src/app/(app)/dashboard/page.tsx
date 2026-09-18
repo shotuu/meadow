@@ -14,7 +14,7 @@ import {
   classifyInstrumentType,
   computeCurrentAllocation,
   computePortfolioDrift,
-  isLegacyInstrumentLabelTarget,
+  partitionStrategyTargets,
   resolveStrategyBucketName,
   splitInvestedFromBrokerageCash,
   type InstrumentType,
@@ -207,8 +207,7 @@ export async function DashboardBody({ headerMode = "sub" }: { headerMode?: "root
       }));
 
       const currentBucketNames = new Set(current.map((a) => a.bucketName));
-      const staleTargets = targets.filter((t) => isLegacyInstrumentLabelTarget(t.bucketName, currentBucketNames));
-      const legitTargets = targets.filter((t) => !staleTargets.some((s) => s.bucketName === t.bucketName));
+      const { active: legitTargets, legacy: staleTargets } = partitionStrategyTargets(targets, currentBucketNames);
 
       if (legitTargets.length > 0) {
         yourPlan = { kind: "drift", rows: computePortfolioDrift(current, legitTargets) };

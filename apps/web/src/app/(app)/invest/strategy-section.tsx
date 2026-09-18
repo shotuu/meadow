@@ -3,7 +3,7 @@ import {
   classifyInstrumentType,
   computeCurrentAllocation,
   computePortfolioDrift,
-  isLegacyInstrumentLabelTarget,
+  partitionStrategyTargets,
   resolveStrategyBucketName,
   splitInvestedFromBrokerageCash,
   type InstrumentType,
@@ -57,8 +57,7 @@ export function StrategySection({
   const current = computeCurrentAllocation(invested);
 
   const currentStrategyBucketNames = new Set(current.map((c) => c.bucketName));
-  const staleTargets = targets.filter((t) => isLegacyInstrumentLabelTarget(t.bucketName, currentStrategyBucketNames));
-  const legitTargets = targets.filter((t) => !staleTargets.some((s) => s.bucketName === t.bucketName));
+  const { active: legitTargets, legacy: staleTargets } = partitionStrategyTargets(targets, currentStrategyBucketNames);
   const drift = computePortfolioDrift(current, legitTargets);
   const driftByBucket = new Map(drift.map((d) => [d.bucketName, d]));
 

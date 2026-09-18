@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeStrategyBucketNames,
   computeCurrentAllocation,
   computePortfolioDrift,
   latestHoldingsBySymbol,
+  partitionStrategyTargets,
   resolveStrategyBucketName,
   splitInvestedFromBrokerageCash,
 } from "../allocation";
@@ -126,6 +128,59 @@ describe("splitInvestedFromBrokerageCash", () => {
     const result = splitInvestedFromBrokerageCash([{ bucketName: "Core", marketValue: 500, instrumentType: "stock" }]);
     expect(result.brokerageCash).toBe(0);
     expect(result.invested).toHaveLength(1);
+  });
+});
+
+describe("activeStrategyBucketNames", () => {
+  it("collects bucket names from non-cash holdings only", () => {
+    const result = activeStrategyBucketNames([
+      { bucketName: "Core", instrumentType: "etf" },
+      { bucketName: "Satellite", instrumentType: "stock" },
+      { bucketName: "Unclassified", instrumentType: "cash" },
+    ]);
+    expect(result).toEqual(new Set(["Core", "Satellite"]));
+  });
+
+  it("returns an empty set for no holdings", () => {
+    expect(activeStrategyBucketNames([])).toEqual(new Set());
+  });
+
+  it("returns an empty set when every holding is cash", () => {
+    expect(activeStrategyBucketNames([{ bucketName: "Unclassified", instrumentType: "cash" }])).toEqual(new Set());
+  });
+});
+
+describe("partitionStrategyTargets", () => {
+  it("separates a legacy instrument-type-label target from real strategy buckets", () => {
+    const targets = [
+      { bucketName: "Stocks", targetWeightPct: 100, driftThresholdPct: 5 },
+      { bucketName: "Core", targetWeightPct: 90, driftThresholdPct: 5 },
+      { bucketName: "Satellite", targetWeightPct: 10, driftThresholdPct: 5 },
+    ];
+    const result = partitionStrategyTargets(targets, new Set(["Core", "Satellite"]));
+    expect(result.active.map((t) => t.bucketName)).toEqual(["Core", "Satellite"]);
+    expect(result.legacy.map((t) => t.bucketName)).toEqual(["Stocks"]);
+    expect(result.active.reduce((sum, t) => sum + t.targetWeightPct, 0)).toBe(100);
+  });
+
+  it("keeps a custom bucket literally named after an instrument-type label when it's genuinely in use", () => {
+    // A user-chosen strategy bucket happens to be named "Bonds" and the
+    // user actually holds something assigned to it -- must not be treated
+    // as legacy just because the name collides with an instrument-type label.
+    const targets = [{ bucketName: "Bonds", targetWeightPct: 100, driftThresholdPct: 5 }];
+    const result = partitionStrategyTargets(targets, new Set(["Bonds"]));
+    expect(result.active).toEqual(targets);
+    expect(result.legacy).toEqual([]);
+  });
+
+  it("treats every target as active when no target is a legacy instrument-type label", () => {
+    const targets = [
+      { bucketName: "Growth", targetWeightPct: 70, driftThresholdPct: 5 },
+      { bucketName: "Income", targetWeightPct: 30, driftThresholdPct: 5 },
+    ];
+    const result = partitionStrategyTargets(targets, new Set(["Growth", "Income"]));
+    expect(result.active).toEqual(targets);
+    expect(result.legacy).toEqual([]);
   });
 });
 
