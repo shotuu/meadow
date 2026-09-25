@@ -6,7 +6,7 @@ import { TransactionsBody } from "../transactions/page";
 export default function ActivityPage({
   searchParams,
 }: {
-  searchParams: Promise<{ category?: string; page?: string; range?: string; tab?: string; q?: string }>;
+  searchParams: Promise<{ category?: string; page?: string; reviewPage?: string; range?: string; tab?: string; q?: string }>;
 }) {
   return <TransactionsBody searchParams={searchParams} headerMode="root" />;
 }

@@ -4,15 +4,24 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export function TransactionsPagination({ page, totalPages }: { page: number; totalPages: number }) {
+export function TransactionsPagination({
+  page,
+  totalPages,
+  paramName = "page",
+}: {
+  page: number;
+  totalPages: number;
+  /** Which search param to read/write -- lets a second, independent list (e.g. the Review tab) paginate without fighting the "All" tab's own `page` param. */
+  paramName?: string;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
   function goTo(nextPage: number) {
     const params = new URLSearchParams(searchParams.toString());
-    if (nextPage <= 1) params.delete("page");
-    else params.set("page", String(nextPage));
+    if (nextPage <= 1) params.delete(paramName);
+    else params.set(paramName, String(nextPage));
     const query = params.toString();
     router.push(query ? `${pathname}?${query}` : pathname);
   }

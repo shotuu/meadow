@@ -73,15 +73,16 @@ export async function TransactionsBody({
   searchParams,
   headerMode = "sub",
 }: {
-  searchParams: Promise<{ category?: string; page?: string; range?: string; tab?: string; q?: string }>;
+  searchParams: Promise<{ category?: string; page?: string; reviewPage?: string; range?: string; tab?: string; q?: string }>;
   headerMode?: "root" | "sub";
 }) {
   const userId = await requireUserId();
-  const { category: categoryParam, page: pageParam, range: rangeParam, tab: tabParam, q: queryParam } = await searchParams;
+  const { category: categoryParam, page: pageParam, reviewPage: reviewPageParam, range: rangeParam, tab: tabParam, q: queryParam } = await searchParams;
   const initialTab = TAB_VALUES.includes(tabParam as (typeof TAB_VALUES)[number]) ? (tabParam as (typeof TAB_VALUES)[number]) : "all";
   const categoryFilter = categoryParam && categoryParam !== "__all__" ? categoryParam : undefined;
   const searchQuery = queryParam?.trim() || undefined;
   const page = Math.max(1, Number(pageParam) || 1);
+  const reviewPage = Math.max(1, Number(reviewPageParam) || 1);
   const spendRange: SpendRangeKind = SPEND_RANGE_KINDS.includes(rangeParam as SpendRangeKind)
     ? (rangeParam as SpendRangeKind)
     : "mtd";
@@ -95,9 +96,30 @@ export async function TransactionsBody({
       ],
     }),
   };
+  // Ignores the category filter -- most rows here are uncategorized (no
+  // categoryId to filter on), so filtering by category would make this tab
+  // look empty whenever any specific category is selected.
+  const needsReviewWhere = {
+    userId,
+    isTransfer: false,
+    OR: [
+      { categorySource: "uncategorized" as const },
+      { categorySource: "ai" as const, categoryConfidence: { lt: LOW_CONFIDENCE_THRESHOLD } },
+    ],
+  };
 
-  const [appUser, accounts, categories, csvTemplates, transactions, transactionCount, needsReview, pendingTransferMatches, pendingReversalMatches] =
-    await Promise.all([
+  const [
+    appUser,
+    accounts,
+    categories,
+    csvTemplates,
+    transactions,
+    transactionCount,
+    needsReview,
+    needsReviewCount,
+    pendingTransferMatches,
+    pendingReversalMatches,
+  ] = await Promise.all([
       prisma.appUser.findUniqueOrThrow({ where: { id: userId } }),
       prisma.financialAccount.findMany({
         where: { userId, isArchived: false },
@@ -121,22 +143,14 @@ export async function TransactionsBody({
         take: PAGE_SIZE,
       }),
       prisma.transaction.count({ where: transactionWhere }),
-      // Ignores the category filter -- most rows here are uncategorized
-      // (no categoryId to filter on), so filtering by category would make
-      // this tab look empty whenever any specific category is selected.
       prisma.transaction.findMany({
-        where: {
-          userId,
-          isTransfer: false,
-          OR: [
-            { categorySource: "uncategorized" },
-            { categorySource: "ai", categoryConfidence: { lt: LOW_CONFIDENCE_THRESHOLD } },
-          ],
-        },
+        where: needsReviewWhere,
         select: TRANSACTION_SELECT,
         orderBy: { date: "desc" },
-        take: 200,
+        skip: (reviewPage - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
       }),
+      prisma.transaction.count({ where: needsReviewWhere }),
       prisma.transferMatchCandidate.findMany({
         where: { userId, status: "pending" },
         orderBy: { confidenceScore: "desc" },
@@ -163,6 +177,7 @@ export async function TransactionsBody({
       }),
     ]);
   const totalPages = Math.max(1, Math.ceil(transactionCount / PAGE_SIZE));
+  const needsReviewTotalPages = Math.max(1, Math.ceil(needsReviewCount / PAGE_SIZE));
 
   const transactionCounterpartIds = pendingTransferMatches
     .filter((c) => c.counterpartType === "transaction")
@@ -453,9 +468,9 @@ export async function TransactionsBody({
               <TabsTrigger value="all">All ({transactionCount})</TabsTrigger>
               <TabsTrigger value="review">
                 Needs review
-                {needsReview.length > 0 && (
+                {needsReviewCount > 0 && (
                   <Badge variant="secondary" className="ml-1">
-                    {needsReview.length}
+                    {needsReviewCount}
                   </Badge>
                 )}
               </TabsTrigger>
@@ -481,11 +496,16 @@ export async function TransactionsBody({
             />
             {totalPages > 1 && <TransactionsPagination page={page} totalPages={totalPages} />}
           </TabsContent>
-          <TabsContent value="review" className="mt-3">
-            {needsReview.length === 0 ? (
+          <TabsContent value="review" className="mt-3 space-y-3">
+            {needsReviewCount === 0 ? (
               <EmptyState icon={Receipt} title="Nothing needs review" description="Every transaction has a confident category." />
             ) : (
-              <TransactionList transactions={needsReview} categories={categories} />
+              <>
+                <TransactionList transactions={needsReview} categories={categories} />
+                {needsReviewTotalPages > 1 && (
+                  <TransactionsPagination page={reviewPage} totalPages={needsReviewTotalPages} paramName="reviewPage" />
+                )}
+              </>
             )}
           </TabsContent>
           <TabsContent value="transfers" className="mt-3 space-y-6">
@@ -514,7 +534,7 @@ export async function TransactionsBody({
 export default function TransactionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ category?: string; page?: string; range?: string; tab?: string; q?: string }>;
+  searchParams: Promise<{ category?: string; page?: string; reviewPage?: string; range?: string; tab?: string; q?: string }>;
 }) {
   return <TransactionsBody searchParams={searchParams} headerMode="sub" />;
 }

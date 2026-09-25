@@ -7,6 +7,19 @@ export { LOW_CONFIDENCE_THRESHOLD };
 const MODEL = "gemini-flash-lite-latest";
 const BATCH_SIZE = 50;
 const LEARNED_EXAMPLE_LIMIT = 20;
+/**
+ * A single run (nightly cron, or a "Sync now" click) keeps calling the batch
+ * endpoint until the uncategorized backlog is drained or this cap is hit,
+ * instead of processing exactly one BATCH_SIZE-sized page per run. A bulk
+ * CSV import or a first Plaid/IBKR/Finverse backfill can easily leave
+ * hundreds or thousands of transactions uncategorized at once; at one batch
+ * per night that backlog took weeks to clear, and every transaction still
+ * sitting at categorySource "uncategorized" is silently excluded from
+ * spend-by-category and budget "spent" totals the whole time (those query
+ * by categoryId). Capped, not unbounded, so a pathological backlog or a
+ * flaky API can't turn one job run into an unbounded loop.
+ */
+const MAX_BATCHES_PER_RUN = 20;
 
 let client: GoogleGenAI | undefined;
 function getClient(): GoogleGenAI {
@@ -41,10 +54,13 @@ interface AiSuggestion {
 
 /**
  * The AI fallback for whatever the synchronous rule pass (applyCategorizationRules,
- * run on every manual/CSV/Plaid transaction) left uncategorized. Batches all of a
- * user's uncategorized transactions into one Gemini call (structured JSON output,
- * not free-text parsing) rather than one call per transaction — this is the free
- * tier, so minimizing request count matters.
+ * run on every manual/CSV/Plaid transaction) left uncategorized. Batches a
+ * user's uncategorized transactions into Gemini calls (structured JSON output,
+ * not free-text parsing) of BATCH_SIZE each rather than one call per
+ * transaction — this is the free tier, so minimizing request count matters —
+ * repeating up to MAX_BATCHES_PER_RUN times per call so a real backlog gets
+ * cleared in one run instead of one page per night (see that constant's own
+ * comment).
  *
  * Shared between apps/worker (nightly cron, all users) and apps/web (the
  * Accounts "Sync now" button, current user only, via runCategorizationBatchForUser
@@ -66,6 +82,17 @@ export async function runCategorizationBatchForAllUsers(): Promise<void> {
 }
 
 export async function runCategorizationBatchForUser(userId: string): Promise<void> {
+  for (let i = 0; i < MAX_BATCHES_PER_RUN; i++) {
+    const attempted = await runCategorizationBatchOnce(userId);
+    // Fewer than a full page means the backlog is drained; 0 also covers
+    // "nothing to do" (no categories) and "this attempt failed" (unparseable/
+    // empty response) -- either way, retrying immediately won't help.
+    if (attempted < BATCH_SIZE) break;
+  }
+}
+
+/** Runs one BATCH_SIZE-sized categorization page. Returns how many transactions were sent to Gemini (0 if none were). */
+async function runCategorizationBatchOnce(userId: string): Promise<number> {
   const [categories, transactions, learnedExamples] = await Promise.all([
     prisma.category.findMany({
       where: { userId, isArchived: false },
@@ -90,7 +117,7 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
     }),
   ]);
 
-  if (transactions.length === 0 || categories.length === 0) return;
+  if (transactions.length === 0 || categories.length === 0) return 0;
 
   const ai = getClient();
   await prisma.transaction.updateMany({
@@ -132,7 +159,7 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
   const text = response.text;
   if (!text) {
     console.error(`[categorization-ai] empty response for user ${userId}`);
-    return;
+    return 0;
   }
 
   let suggestions: AiSuggestion[];
@@ -141,7 +168,7 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
     if (!Array.isArray(suggestions)) throw new Error("Expected an array");
   } catch {
     console.error(`[categorization-ai] unparseable response for user ${userId}`);
-    return;
+    return 0;
   }
 
   const validCategoryIds = new Set(categories.map((c) => c.id));
@@ -159,4 +186,6 @@ export async function runCategorizationBatchForUser(userId: string): Promise<voi
       data: { categoryId: s.categoryId, categorySource: "ai", categoryConfidence: confidence },
     });
   }
+
+  return transactions.length;
 }
