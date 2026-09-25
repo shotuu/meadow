@@ -5,6 +5,7 @@ import {
   computeNextExpectedDate,
   isMissed,
   normalizeMerchantKey,
+  RECENT_OCCURRENCE_WINDOW,
 } from "@finance-app/finance-logic";
 
 export function median(values: number[]): number {
@@ -124,8 +125,12 @@ export async function recomputeRecurringSeriesForUser(userId: string): Promise<v
       continue;
     }
 
-    const signedAmounts = occurrences.map((o) => o.amount);
-    const expectedAmount = median(signedAmounts);
+    // Same recent-occurrence window detectRecurring itself scores on (see
+    // RECENT_OCCURRENCE_WINDOW's own comment) -- otherwise expectedAmount
+    // would keep reflecting a lifetime median long after detectRecurring's
+    // own confidence/cadence have already picked up a real price change.
+    const recentOccurrences = occurrences.slice(-RECENT_OCCURRENCE_WINDOW);
+    const expectedAmount = median(recentOccurrences.map((o) => o.amount));
     const lastSeenDate = occurrences[occurrences.length - 1].date;
     const cadence = result.cadence as RecurringCadence;
     const nextExpectedDate = computeNextExpectedDate(lastSeenDate, result.cadence);

@@ -25,6 +25,18 @@ const ACTIVE_THRESHOLD = 0.6;
 const POSSIBLE_THRESHOLD = 0.35;
 const AMOUNT_CV_NORMALIZER = 0.2;
 const COUNT_BONUS_SATURATION = 8;
+/**
+ * Cadence/amount scoring only looks at the most recent occurrences, not a
+ * series' entire lifetime — a lifetime median dilutes a real price change
+ * for years on a long-lived series (a 30-month-old subscription that just
+ * doubled in price needs 30 *more* months at the new price before a
+ * lifetime median even moves) and lets old irregularity permanently
+ * suppress cadence confidence even after a series has been rock-solid for
+ * a year. occurrenceCount/countBonus below deliberately still use the full
+ * lifetime length — "we've seen this merchant many times" is a legitimate,
+ * undiluted signal on its own.
+ */
+export const RECENT_OCCURRENCE_WINDOW = 12;
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
@@ -64,7 +76,9 @@ function bucketCadence(medianIntervalDays: number): Cadence {
 /**
  * Scores a group of same-merchant transactions for how likely they represent
  * a recurring subscription/charge. Returns null if there isn't enough
- * history to judge (fewer than 3 occurrences).
+ * history to judge (fewer than 3 occurrences). Cadence/amount confidence and
+ * medianAmount are computed from only the most recent RECENT_OCCURRENCE_WINDOW
+ * occurrences — see that constant's own comment for why.
  */
 export function detectRecurring(input: RecurringDetectionInput): RecurringDetectionResult | null {
   const { occurrenceDates, amounts } = input;
@@ -72,16 +86,20 @@ export function detectRecurring(input: RecurringDetectionInput): RecurringDetect
     return null;
   }
 
+  const windowStart = Math.max(0, occurrenceDates.length - RECENT_OCCURRENCE_WINDOW);
+  const recentDates = occurrenceDates.slice(windowStart);
+  const recentAmounts = amounts.slice(windowStart);
+
   const intervals: number[] = [];
-  for (let i = 1; i < occurrenceDates.length; i++) {
-    intervals.push(daysBetween(occurrenceDates[i - 1], occurrenceDates[i]));
+  for (let i = 1; i < recentDates.length; i++) {
+    intervals.push(daysBetween(recentDates[i - 1], recentDates[i]));
   }
   const medianInterval = median(intervals);
   const madInterval = medianAbsoluteDeviation(intervals, medianInterval);
   const cadenceConfidence =
     medianInterval === 0 ? 0 : clamp01(1 - madInterval / medianInterval);
 
-  const absAmounts = amounts.map(Math.abs);
+  const absAmounts = recentAmounts.map(Math.abs);
   const medAmount = median(absAmounts);
   const madAmount = medianAbsoluteDeviation(absAmounts, medAmount);
   const coefficientOfVariation = medAmount === 0 ? 0 : madAmount / medAmount;

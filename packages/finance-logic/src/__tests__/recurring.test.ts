@@ -6,7 +6,14 @@ import {
   detectRecurring,
   isMissed,
   normalizeMerchantKey,
+  RECENT_OCCURRENCE_WINDOW,
 } from "../recurring";
+
+function addMonthsUtc(date: Date, months: number): Date {
+  const next = new Date(date);
+  next.setUTCMonth(next.getUTCMonth() + months);
+  return next;
+}
 
 describe("detectRecurring", () => {
   it("returns null with fewer than 3 occurrences", () => {
@@ -48,6 +55,51 @@ describe("detectRecurring", () => {
       amounts: [499.99, 499.99, 499.99],
     });
     expect(result!.cadence).toBe("annual");
+  });
+
+  it("reflects a real price change instead of a lifetime median diluted by years at the old price", () => {
+    // 30 months at $15.99, then 10 months at $22.99 -- a genuine, permanent
+    // price increase, comfortably past the halfway point of the 12-occurrence
+    // scoring window. A lifetime median would still report $15.99 here (with
+    // 30 old vs. 10 new, the old price is still the majority of all-time
+    // occurrences); windowed scoring should already reflect the new price.
+    const start = new Date("2023-04-01T00:00:00Z");
+    const occurrenceDates: Date[] = [];
+    const amounts: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      occurrenceDates.push(addMonthsUtc(start, i));
+      amounts.push(i < 30 ? -15.99 : -22.99);
+    }
+
+    const result = detectRecurring({ occurrenceDates, amounts });
+    expect(result).not.toBeNull();
+    expect(result!.medianAmount).toBeCloseTo(22.99);
+    // occurrenceCount still reflects the true lifetime count, not the window.
+    expect(result!.occurrenceCount).toBe(40);
+  });
+
+  it("recovers full cadence confidence once a formerly-irregular series has been solid for a full window", () => {
+    // First 20 occurrences: irregular gaps. Last 12: exact monthly. A
+    // lifetime MAD would stay permanently poisoned by the irregular tail;
+    // windowed scoring should score on the regular tail alone.
+    const occurrenceDates: Date[] = [];
+    const amounts: number[] = [];
+    let cursor = new Date("2021-01-05T00:00:00Z");
+    for (let i = 0; i < 20; i++) {
+      cursor = new Date(cursor.getTime() + (20 + ((i * 37) % 50)) * 86400000);
+      occurrenceDates.push(new Date(cursor));
+      amounts.push(-40 - (i % 3));
+    }
+    for (let i = 0; i < RECENT_OCCURRENCE_WINDOW; i++) {
+      cursor = addMonthsUtc(cursor, 1);
+      occurrenceDates.push(new Date(cursor));
+      amounts.push(-45);
+    }
+
+    const result = detectRecurring({ occurrenceDates, amounts });
+    expect(result).not.toBeNull();
+    expect(result!.cadenceConfidence).toBeCloseTo(1);
+    expect(result!.amountConfidence).toBeCloseTo(1);
   });
 });
 
