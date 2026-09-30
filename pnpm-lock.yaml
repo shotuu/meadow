@@ -159,9 +159,6 @@ importers:
       '@finance-app/plaid-sync':
         specifier: workspace:*
         version: link:../../packages/plaid-sync
-      node-cron:
-        specifier: ^4.6.0
-        version: 4.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.5
@@ -4258,10 +4255,6 @@ packages:
         optional: true
       sass:
         optional: true
-
-  node-cron@4.6.0:
-    resolution: {integrity: sha512-Si/bzYiKRHOB8/a99T2+SDGN582ONDMSTlJr5oCkT6GtnqPjZ2s10eoQRYkW9ZHwjVxONL+W8Fb+qR0AHMQsdg==}
-    engines: {node: '>=20'}
 
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
@@ -9430,8 +9423,6 @@ snapshots:
       - '@babel/core'
       - '@types/node'
       - babel-plugin-macros
-
-  node-cron@4.6.0: {}
 
   node-domexception@1.0.0: {}
 
